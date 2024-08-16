@@ -3,7 +3,7 @@ This project contains the code of Cdf Smoothing via Virtual points (CSV).
 
 Kindly make sure any libraries required for [LIPP](https://github.com/Jiacheng-WU/lipp), [SALI](https://github.com/cds-ruc/SALI) and [ALEX](https://github.com/microsoft/ALEX) are installed.
 
-First make sure any download the neccessary datasets:
+First make sure to download the neccessary datasets:
 ```
 ./data_download.sh
 
