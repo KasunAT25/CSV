@@ -23,73 +23,30 @@ void first_x(std::string data_input,std::string data_out,  int n);
 
 int main(int argc, char *argv[]) {
 
-    // std::string data_output = "../../../mnt2/Data/genome.bin";
-    // remove_dup_data(data_output,argc, argv);
+    int args_num = 3;
 
-    // std::string data_input = "genome";
-    // split_bulk_insert(data_input, 0.5, 5);
-    std::string data_input = "genome";
-    std::string data_out = "test_genome";
+    char *temp[] = {
+    (char*)"run",    
+    (char*)"data/fb",
+    (char*)"200000000",
+    };
 
-    first_x(data_input,data_out, 1000000);
+    remove_dup_data("data/fb.bin",args_num, temp);
 
-    // std::vector<int> bulk_load_indexes;
-    
+    temp[1] = (char*)"data/covid";
 
-    // std::string folder = "../../../mnt2/Data/";
-    // std::string bulk_index_output = folder+ "Splits/"+ data_input +"_bulk.bin";
+    remove_dup_data("data/covid.bin",args_num, temp);
 
-    // bulk_load_indexes = readIndexesFromFile(bulk_index_output);
+    temp[1] = (char*)"data/osm";
+    remove_dup_data("data/osm.bin",args_num, temp);
 
-    // // for(int i =0; i <bulk_load_indexes.size(); i++ ){
-    // //     std::cout << bulk_load_indexes[i] << " ";
-    // // }
+    temp[1] = (char*)"data/genome";
+    remove_dup_data("data/genome.bin",args_num, temp);
 
-    // std::cout << "=========== "<< std::endl;
-    // for(int j = 0; j < 5; j++){
-    //     std::string insert_index_output = folder+ "Splits/"+ data_input +"_insert"+"_"+std::to_string(j)+".bin";
-    //     std::vector<int> insert_indexes = readIndexesFromFile(insert_index_output);
-    //     for(int i =0; i <insert_indexes.size(); i++ ){
-    //         std::cout << insert_indexes[i] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    
-    //insert_indexes = readIndexesFromFile(insert_index_output);
-
-
-    //CSV to data bin
-    //================
-    // std::string data_intput = "../../../ext/Data/order_price_full.csv";
-    // std::string data_output = "../../../ext/Data/skew.bin";
-    // std::vector<KEY_TYPE> legitimate_data = readCSV(data_intput);
-    // std::cout<< "Data size before" << legitimate_data.size() << std::endl;
-    // std::sort(legitimate_data.begin(), legitimate_data.end());
-
-    // // for(int i = 0; i < 100 ; i++){
-    // //     std::cout<<  legitimate_data[i] << std::endl;
-    // // }
-
-    // std::cout<< "Data sorted" << std::endl;
-    // legitimate_data.erase(std::unique(legitimate_data.begin(), legitimate_data.end()), legitimate_data.end());
-    // save_data_bin(legitimate_data,data_output);
-    // std::cout<< "Data size after" << legitimate_data.size() << std::endl;
-
-    //Remove dup data
-    //================
-    // std::string data_output = "../../../ext/Data/skew.bin";
-
-    // std::vector<KEY_TYPE> legitimate_data = parse_arguments(argc, argv);
-    // std::cout<< "Data read" << std::endl;
-    // std::sort(legitimate_data.begin(), legitimate_data.end());
-
-    // std::cout<< "Data sorted" << std::endl;
-    // legitimate_data.erase(std::unique(legitimate_data.begin(), legitimate_data.end()), legitimate_data.end());
-    // save_data_bin(legitimate_data,data_output);
-
-    // std::cout<< "Data saved to " << data_output << std::endl;
-
-    
+    split_bulk_insert("fb", 0.5, 5);
+    split_bulk_insert("covid", 0.5, 5);
+    split_bulk_insert("osm", 0.5, 5);
+    split_bulk_insert("genome", 0.5, 5);
 
     return 0;
 }
@@ -129,6 +86,7 @@ std::vector<uint64_t> readCSV(const std::string& filename) {
     return data;
 }
 
+
 void csv_to_bin(std::string data_intput, std::string data_output) {
     //std::string data_intput = "../../../ext/Data/order_price_full.csv";
     //std::string data_output = "../../../ext/Data/skew.bin";
@@ -161,7 +119,8 @@ void remove_dup_data(std::string data_output,int argc, char *argv[]) {
 }
 
 void split_bulk_insert(std::string data_input, double insert_prop, int inserts) {
-    std::string folder = "../../../mnt2/Data/";
+    // std::string folder = "../../../mnt2/Data/";
+    std::string folder = "data/";
     std::string data_input2 = folder+data_input +".bin";
     std::vector<KEY_TYPE> legitimate_data = read_data_bin(data_input2);
     int values_size = legitimate_data.size();
@@ -195,7 +154,7 @@ void split_bulk_insert(std::string data_input, double insert_prop, int inserts) 
     size_t partSize = insert_indexes.size() / inserts;
     size_t remainder = insert_indexes.size() % inserts;
 
-    std::string bulk_index_output = folder+ "Splits/"+ data_input +"_bulk.bin";
+    std::string bulk_index_output = folder+ "splits/"+ data_input +"_bulk.bin";
 
     saveIndexesToFile(bulk_load_indexes, bulk_index_output);
     
@@ -212,7 +171,7 @@ void split_bulk_insert(std::string data_input, double insert_prop, int inserts) 
     }
     for (int i = 0; i < inserts; ++i) {
         std::vector<int> part = parts[i];
-        std::string insert_index_output = folder+ "Splits/"+ data_input +"_insert"+"_"+std::to_string(i)+".bin";
+        std::string insert_index_output = folder+ "splits/"+ data_input +"_insert"+"_"+std::to_string(i)+".bin";
         saveIndexesToFile(part, insert_index_output);
     }
     

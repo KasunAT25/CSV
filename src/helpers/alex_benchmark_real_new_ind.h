@@ -456,7 +456,7 @@ bool poison, bool insert, std::string orignal_P, double insert_threshold){
 
     // file.close();
 
-    std::cout << regression_name << " data_name:" << data_name << "; poisoning_threshold: " << poisoning_threshold << "; data size:" << data.size() << " lookups size:" << lookups.size() << " mean lookup ns:" << mean << " median lookup ns:" << median << " log error:" << log_error << " discrete log error:" << d_log_error << " mse error:" << mse_error << " build time:" << build_time << std::endl;
+    //std::cout << regression_name << " data_name:" << data_name << "; poisoning_threshold: " << poisoning_threshold << "; data size:" << data.size() << " lookups size:" << lookups.size() << " mean lookup ns:" << mean << " median lookup ns:" << median << " log error:" << log_error << " discrete log error:" << d_log_error << " mse error:" << mse_error << " build time:" << build_time << std::endl;
 
     //std::cout << regression_name << " data_name:" << data_name << "; Time Total: " << average_tot <<"; Time Query: " << average_query << "; Time Search:" << average_search <<  std::endl;
 

@@ -240,11 +240,11 @@ bool poison, bool insert, KEY_TYPE orignal_P, double insert_threshold){
           std::to_string(mean) + ";" +std::to_string(median) +";"+ std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
           std::to_string(orignal_P)  + ";"  + std::to_string(insert_threshold) ;
 
-    std::cout << regression_name << " data_name:" << data_name << "; poisoning_threshold: " << poisoning_threshold << "; data size:" << data.size() << " lookups size:" << lookups.size() << " mean lookup ns:" << mean << " median lookup ns:" << median << " log error:" << log_error << " discrete log error:" << d_log_error << " mse error:" << mse_error << " build time:" << build_time << std::endl;
+    //std::cout << regression_name << " data_name:" << data_name << "; poisoning_threshold: " << poisoning_threshold << "; data size:" << data.size() << " lookups size:" << lookups.size() << " mean lookup ns:" << mean << " median lookup ns:" << median << " log error:" << log_error << " discrete log error:" << d_log_error << " mse error:" << mse_error << " build time:" << build_time << std::endl;
 
-    std::cout << regression_name << " data_name:" << data_name << "; Time Total: " << average_tot <<"; Time Query: " << average_query << "; Time Search:" << average_search <<  std::endl;
+    std::cout << regression_name << " data_name:" << data_name << "; Time Total: " << mean <<"; Time Query: " << average_query << "; Time Search:" << average_search <<  std::endl;
 
-    std::cout << "MEAN: "<< mean << std::endl;
+    //std::cout << "MEAN: "<< mean << std::endl;
 
     std::string outputfile = outfile+"_"+data_name+"_ind_"+std::to_string(poison) +"_" + std::to_string(insert) + "_" +
           std::to_string(orignal_P) +"_" + std::to_string(insert_threshold) +".csv";

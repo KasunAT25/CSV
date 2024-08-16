@@ -1785,7 +1785,7 @@ public:
         // std::cout << key2 << std::endl;
 
         RT_ASSERT(key1 < key2);
-        static_assert(BITMAP_WIDTH == 8);
+        // static_assert(BITMAP_WIDTH == 8);
 
         Node* node = NULL;
         

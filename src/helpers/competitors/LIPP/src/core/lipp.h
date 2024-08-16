@@ -18,10 +18,7 @@ typedef uint8_t bitmap_t;
 #define BITMAP_SET(bitmap, pos) ((bitmap)[(pos) / BITMAP_WIDTH] |= 1 << ((pos) % BITMAP_WIDTH))
 #define BITMAP_CLEAR(bitmap, pos) ((bitmap)[(pos) / BITMAP_WIDTH] &= ~bitmap_t(1 << ((pos) % BITMAP_WIDTH)))
 #define BITMAP_NEXT_1(bitmap_item) __builtin_ctz((bitmap_item))
-// TO REMOVE POI_BITMAP
-// Delete all instances of poi_bitmap amd change else if to else 
-// runtime assert
-//I changed the struct Node to public and put it at the top as well as Items
+
 #define RT_ASSERT(expr) \
 { \
     if (!(expr)) { \

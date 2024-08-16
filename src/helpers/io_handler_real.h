@@ -282,7 +282,7 @@ std::vector<u_int64_t> parse_arguments(int argc, char *argv[]){
 
     // }
     else{
-        if (cache_data.size() == 0){
+        if (cache_data.size() == 0 || true){
             std::cout << argv[1] << "\n";
             cache_data = load_data<u_int64_t>(argv[1]);
         }
