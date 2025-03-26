@@ -85,7 +85,8 @@ public:
             if (v < 0) {
                 return 0;
             }
-            return std::min(node->num_items - 1, static_cast<int>(v));
+             return std::min(node->num_items - 1, static_cast<int>(v));
+            // return std::min(node->num_items - 1, static_cast<int>(round(v)));
         }
 
         static void remove_last_bit(bitmap_t& bitmap_item) {
@@ -139,7 +140,7 @@ public:
     }
     void insert(const T& key, const P& value) {
         //I changed from insert_tree to insert_tree2
-        root = insert_tree2(root, key, value);
+        root = insert_tree3(root, key, value);
     }
     P at(const T& key, bool skip_existence_check = true) const {
         Node* node = root;
@@ -759,6 +760,9 @@ public:
                 node->poi_bitmap = new_bitmap(bitmap_size);
                 memset(node->poi_bitmap, 0, sizeof(bitmap_t) * bitmap_size);
 
+                //node->model.a = node->model.a*2;
+                //node->model.b = node->model.b*2;
+
                 //This is where they set the new ones. 
                 for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size; ) {
                     int next = offset + 1, next_i = -1;
@@ -846,6 +850,9 @@ public:
                 node->is_two = 0;
                 node->build_size = size;
                 node->size = size - poi_count_r;
+
+                // std::cout << "full " << size << std::endl;
+                //  std::cout << "real " << node->size << std::endl;
                 //node->size = _size_real;
                 node->fixed = 0;
                 node->num_inserts = node->num_insert_to_data = 0;
@@ -877,7 +884,7 @@ public:
                              (static_cast<double>(L - 2)) + 1e-6;
                     }
                     if (D * 3 <= size) {
-                        stats.fmcd_success_times ++;
+                        //stats.fmcd_success_times ++;
 
                         node->model.a = 1.0 / Ut;
                         node->model.b = (L - node->model.a * (static_cast<long double>(keys[size - 1 - D]) +
@@ -886,7 +893,7 @@ public:
                         RT_ASSERT(isfinite(node->model.b));
                         node->num_items = L;
                     } else {
-                        stats.fmcd_broken_times ++;
+                       // stats.fmcd_broken_times ++;
 
                         int mid1_pos = (size - 1) / 3;
                         int mid2_pos = (size - 1) * 2 / 3;
@@ -910,6 +917,7 @@ public:
                         RT_ASSERT(isfinite(node->model.b));
                     }
                 }
+                //std::cout << "model " << node->model.a << std::endl;
                 RT_ASSERT(node->model.a >= 0);
                 const int lr_remains = static_cast<int>(size * BUILD_LR_REMAIN);
                 node->model.b += lr_remains;
@@ -930,6 +938,8 @@ public:
                 node->poi_bitmap = new_bitmap(bitmap_size);
                 memset(node->poi_bitmap, 0, sizeof(bitmap_t) * bitmap_size);
 
+                // node->model.a = node->model.a*2;
+                // node->model.b = node->model.b*2;
                 //This is where they set the new ones. 
                 
                 bool real_next = false;
@@ -1042,6 +1052,11 @@ public:
                 //THIS WILL SAVE ALL DATA BUT AS SEPERATE TYPES
                 //Save all including poisoned. So if there are crashes then it will save them here too
                 
+                //predict the position of keys[0]
+                int real_idx = idx;
+
+                // std::cout << real_idx << ", ";
+                
                 for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size; ) {
 
                     real_next = false;
@@ -1051,17 +1066,20 @@ public:
 
                     int next = offset + 1, next_i = -1;
 
-                    if(std::find(_keys_real, _keys_real + _size_real, keys[offset]) != _keys_real + _size_real){
+                    if(_keys_real[real_idx] == keys[offset]){
+                    //if(std::find(_keys_real, _keys_real + _size_real, keys[offset]) != _keys_real + _size_real){
                             real_prev = true;
                             count++;
                             id = offset;
+                            real_idx++;
                         }
                         else{
                             poi_count++;
                         }
 
                     //int next_real = offset + 1;
-                    //The ISSUE IS WITH NEXT_I
+                    
+                    
                     while (next < size) {
                         
                         next_i = PREDICT_POS(node, keys[next]);
@@ -1070,10 +1088,13 @@ public:
                         //If the same location then do this. I could check if this is poisoned then can skip. that and check the next original.
                         //If it is JUST poisoned then do not create a child. If it also has original data THEN create the child.
                         real = false;
-                        if(std::find(_keys_real, _keys_real + _size_real, keys[next]) != _keys_real + _size_real){
+                        if(_keys_real[real_idx] == keys[next]){
+                        // if(std::find(_keys_real, _keys_real + _size_real, keys[next]) != _keys_real + _size_real){
                                 real = true;   
+                                real_idx++;
                                 //idx++;
                             }
+                        //If next one is predicting to the same location,
                         if (next_i == item_i) {
                             if(real){
                                 real_next = true;
@@ -1090,6 +1111,9 @@ public:
                             // }
                             next ++;
                         } else {
+                            if(real){
+                                real_idx--;
+                            } 
                             break;
                         }
                     }
@@ -1098,12 +1122,13 @@ public:
                          //No conflicts and if it is in the real dataset add
                         // if(std::find(_keys_real, _keys_real + _size_real, keys[offset]) != _keys_real + _size_real){
                         if(real_prev){
+                            //Adding a real one point
                             BITMAP_CLEAR(node->none_bitmap, item_i);
                             node->items[item_i].comp.data.key = keys[offset];
                             node->items[item_i].comp.data.value = values[offset];
                         }
                         else{
-                            //ADD SOMETHING
+                            //Adding a smoothing point
                             BITMAP_CLEAR(node->none_bitmap, item_i);
                             BITMAP_SET(node->poi_bitmap, item_i);
                             
@@ -1113,27 +1138,34 @@ public:
                             node->poi_size++;
                         }
                         
-                    } else {
+                    } 
+                    //Multiple are pointing to the same location
+                    else {
                         // ASSERT(next - offset <= (size+2) / 3);
                         //In the conficts atleast one is real key. Then move to the next.
-                        //DOUBLE CHECK THIS
+                        // More than one real
                         if(count > 1){
                             BITMAP_CLEAR(node->none_bitmap, item_i);
                             BITMAP_SET(node->child_bitmap, item_i);
                             node->items[item_i].comp.child = new_nodes(1);
-                            s.push((Segment){begin + offset, begin + next, level + 1, node->items[item_i].comp.child, idx, poi_count});
+                            //real_idx = real_idx - count;
+                            s.push((Segment){begin + offset, begin + next, level + 1, node->items[item_i].comp.child, real_idx-count, 
+                            poi_count});
                         }
+                        //Exactly one is real
                         else if(count == 1){
-                            if(std::find(_keys_real, _keys_real + _size_real, keys[id]) != _keys_real + _size_real){
+                            //if(std::find(_keys_real, _keys_real + _size_real, keys[id]) != _keys_real + _size_real){
                                 BITMAP_CLEAR(node->none_bitmap, item_i);
                                 node->items[item_i].comp.data.key = keys[id];
                                 node->items[item_i].comp.data.value = values[id];
-                            }
+                            //}
                             
                         }
                         //If there are conflicts but all are poisoned values then
+                        //never gets here right?
                         else{
                             // if(std::find(_keys_real, _keys_real + _size_real, keys[offset]) != _keys_real + _size_real){
+                            //Only add if the current one is real
                             if(real_prev){
                                 BITMAP_CLEAR(node->none_bitmap, item_i);
                                 node->items[item_i].comp.data.key = keys[offset];
@@ -1152,7 +1184,7 @@ public:
                 }
             }
         }
-
+        // std::cout <<" Here " << std::endl;
         return ret;
     }
 
@@ -1247,6 +1279,7 @@ public:
                     node->child_bitmap[0] = 0;
 
                     node->poi_bitmap[0] = 0;
+                    
                     pending_two.push(node);
                 } else {
                     delete_items(node->items, node->num_items);
@@ -1572,6 +1605,98 @@ public:
                 #endif
                 // Node* new_node = build_tree_bulk(keys, values, ESIZE);
                 Node* new_node = poi_build_tree_bulk(keys, values, ESIZE,keys_real, ESIZE-node->poi_size);
+
+                
+                #if COLLECT_TIME
+                auto end_time_build = std::chrono::high_resolution_clock::now();
+                auto duration_build = end_time_build - start_time_build;
+                stats.time_build_tree_bulk += std::chrono::duration_cast<std::chrono::nanoseconds>(duration_build).count() * 1e-9;
+                #endif
+
+                delete[] keys;
+                delete[] values;
+
+                path[i] = new_node;
+                if (i > 0) {
+                    int pos = PREDICT_POS(path[i-1], key);
+                    path[i-1]->items[pos].comp.child = new_node;
+                }
+
+                break;
+            }
+        }
+
+        return path[0];
+    }
+
+    Node* insert_tree3(Node* _node, const T& key, const P& value)
+    {
+        constexpr int MAX_DEPTH = 128;
+        Node* path[MAX_DEPTH];
+        int path_size = 0;
+        int insert_to_data = 0;
+
+        for (Node* node = _node; ; ) {
+            RT_ASSERT(path_size < MAX_DEPTH);
+            path[path_size ++] = node;
+
+            node->size ++;
+            node->num_inserts ++;
+            int pos = PREDICT_POS(node, key);
+            if (BITMAP_GET(node->none_bitmap, pos) == 1) {
+                BITMAP_CLEAR(node->none_bitmap, pos);
+                node->items[pos].comp.data.key = key;
+                node->items[pos].comp.data.value = value;
+                break;
+            } 
+            else if(BITMAP_GET(node->poi_bitmap, pos) == 1){
+                BITMAP_CLEAR(node->poi_bitmap, pos);
+                node->items[pos].comp.data.key = key;
+                node->items[pos].comp.data.value = value;
+                node->size --;
+                node->num_inserts --;
+                break;
+            }
+            
+            else if (BITMAP_GET(node->child_bitmap, pos) == 0 && BITMAP_GET(node->poi_bitmap, pos) == 0) {
+                BITMAP_SET(node->child_bitmap, pos);
+                node->items[pos].comp.child = build_tree_two(key, value, node->items[pos].comp.data.key, node->items[pos].comp.data.value);
+                insert_to_data = 1;
+                break;
+            } else {
+                node = node->items[pos].comp.child;
+            }
+        }
+        for (int i = 0; i < path_size; i ++) {
+            path[i]->num_insert_to_data += insert_to_data;
+        }
+
+        for (int i = 0; i < path_size; i ++) {
+            Node* node = path[i];
+            const int num_inserts = node->num_inserts;
+            const int num_insert_to_data = node->num_insert_to_data;
+            const bool need_rebuild = node->fixed == 0 && node->size >= node->build_size * 4 && node->size >= 64 && num_insert_to_data * 10 >= num_inserts;
+            
+            if (need_rebuild) {
+                std::cout << "rebuild" << std::endl;
+                const int ESIZE = node->size;
+                T* keys = new T[ESIZE];
+                P* values = new P[ESIZE];
+
+                #if COLLECT_TIME
+                auto start_time_scan = std::chrono::high_resolution_clock::now();
+                #endif
+                scan_and_destory_tree(node, keys, values);
+                #if COLLECT_TIME
+                auto end_time_scan = std::chrono::high_resolution_clock::now();
+                auto duration_scan = end_time_scan - start_time_scan;
+                stats.time_scan_and_destory_tree += std::chrono::duration_cast<std::chrono::nanoseconds>(duration_scan).count() * 1e-9;
+                #endif
+
+                #if COLLECT_TIME
+                auto start_time_build = std::chrono::high_resolution_clock::now();
+                #endif
+                Node* new_node = build_tree_bulk(keys, values, ESIZE);
                 #if COLLECT_TIME
                 auto end_time_build = std::chrono::high_resolution_clock::now();
                 auto duration_build = end_time_build - start_time_build;
@@ -1838,7 +1963,7 @@ public:
                 //Node* new_node = poi_build_tree_bulk(keys, values, ESIZE_POI,keys_real, _size_real);
                 //std::cout<< " SAME 1 " <<std::endl;
                 new_node = poi_build_tree_bulk(keys, values, ESIZE_POI,keys_real, _size_real);
-                //std::cout<< " SAME 2 " <<std::endl;
+                // std::cout<< " SAME 2 " <<std::endl;
                 #if COLLECT_TIME
                 auto end_time_build = std::chrono::high_resolution_clock::now();
                 auto duration_build = end_time_build - start_time_build;
@@ -1856,8 +1981,12 @@ public:
                 //     int pos = PREDICT_POS(path[i-1], key);
                 //     path[i-1]->items[pos].comp.child = new_node;
                 // }
+                
+                //IF FULL THEN REMOVE THIS
+                //=================
                 int pos = PREDICT_POS(path[path_size-2], key);
                 path[path_size-2]->items[pos].comp.child = new_node;
+                //=================
 
                 //Increasing the height of the above ones by this amount.
                 // path[path_size-2]->size = path[path_size-2]->size+ESIZE_POI-ESIZE;

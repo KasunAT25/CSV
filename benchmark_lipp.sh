@@ -1,18 +1,18 @@
 #!/bin/bash
 
 # chmod +x benchmark_lipp.sh
-# nohup ./benchmark_lipp.sh &
 
 datasets=("fb" "covid" "osm" "genome")
-# datasets=("test")
 
 smooths=("1" "0")
+#smooths=("1")
 smooth_sizes=("0.05" "0.1" "0.2" "0.4" "0.8")
+# smooth_sizes=("0.1")
 
 insert_props=("0")
 
 # Compile the C++ program
-# g++ lipp_csv.cpp -std=c++17 -o lipp_csv -march=native -mpopcnt
+g++ -pthread lipp_csv_par.cpp -std=c++17 -o lipp_csv_par -march=native -mpopcnt
 
 # Check if compilation was successful
 if [ $? -eq 0 ]; then
@@ -29,7 +29,7 @@ for dataset in "${datasets[@]}"; do
             for smooth in "${smooths[@]}"; do
                 echo "Running with dataset: $dataset: smooth $smooth: smooth size $smooth_size: insert prop $insert_prop"
                 #echo "=============="
-                ./lipp_csv "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop"
+                ./lipp_csv_par "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop"
             done
         done
     done 

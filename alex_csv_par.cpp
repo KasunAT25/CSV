@@ -1,6 +1,4 @@
-// RUN using
-// g++ alex_csv.cpp -std=c++17 -o alex_csv -march=native -mpopcnt
-// ./alex_csv test 1000000 1 0.2 0
+
 
 #define KEY_TYPE uint64_t
 #define PAYLOAD_TYPE double
@@ -14,13 +12,18 @@
 
 
 #include "src/helpers/io_handler_real.h"
-#include "src/smooth_simple.h"
-#include "src/helpers/alex_benchmark_real_new_ind.h"
+#include "src/smooth_simple_v2.h"
+
+#include "src/helpers/alex_benchmark.h"
 #include "src/fast_brute_force_real.h"
 
 #include "src/theil_sen.h"
 
 #include <unordered_set>
+
+#include <thread>
+#include <mutex>
+#include <unordered_map>
 
 typedef alex::AlexNode<KEY_TYPE, PAYLOAD_TYPE> node_type;
 
@@ -32,7 +35,7 @@ bool check_duplicates(std::vector<KEY_TYPE> data);
 
 std::pair<uint64_t, PAYLOAD_TYPE> * create_values(std::vector<KEY_TYPE> data,int * size);
 
-void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYPE> data, int max_data, double *const_search, double *const_traversal);
+void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYPE> data, int max_data, double *const_search, double *const_traversal,bool insert, std::string dataset_name);
 
 void get_all_nodes(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index, std::vector<node_type*> *nodes,std::vector<model_node_type*> *model_nodes,
 std::vector<data_node_type*> *data_nodes,int *max_model_height);
@@ -48,14 +51,6 @@ void get_children_data(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,model_node_type
 std::vector<PAYLOAD_TYPE> *model_node_payload, double *children_cost,
 double const_search, double const_traversal, bool calculate_childern_costs);
 
-std::vector<std::pair<model_node_type*,double>> calculate_best_node_cost_prev(std::vector<model_node_type*>& model_nodes_useful);
-
-void calculate_children_new_cost(std::vector<model_node_type*>& model_nodes_useful,alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index);
-void calculate_children_new_cost(std::vector<model_node_type*>& model_nodes_useful, alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
-double search_const, double traversal_const);
-
-void calculate_data_node_new_cost(std::vector<data_node_type*>& data_nodes, alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
-double search_const, double traversal_const);
 void calculate_cost_difference(std::vector<model_node_type*>& model_nodes_useful);
 void get_useful_model_nodes_by_level( std::vector<model_node_type*> *model_nodes, std::vector<model_node_type*> *model_nodes_useful, int level);
 
@@ -63,14 +58,14 @@ void shift_vector(std::vector<KEY_TYPE>* vec, KEY_TYPE key);
 void shift_back_vector(std::vector<KEY_TYPE>* vec, KEY_TYPE key);
 std::pair<KEY_TYPE, PAYLOAD_TYPE> * get_poisoned_values(std::vector<KEY_TYPE> data_leg, std::vector<KEY_TYPE> data_poi,
 std::vector<PAYLOAD_TYPE> payload, int size);
-data_node_type * create_new_data_node(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index , model_node_type* model, std::pair<uint64_t, double> * values, std::vector<KEY_TYPE> leg,int size, int cur_size,
+data_node_type * create_new_data_node(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index , model_node_type* model, std::pair<KEY_TYPE, PAYLOAD_TYPE> * values, std::vector<KEY_TYPE> leg,int size, int cur_size,
 double const_search, double const_traversal);
 
 void get_data_node_data(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,data_node_type* child, std::vector<KEY_TYPE> *model_node_data);
 void find_difference(std::vector<KEY_TYPE>* existingVector, std::vector<KEY_TYPE> vec1, std::vector<KEY_TYPE> vec2);
 
 std::vector<model_node_type*> replace_parents(model_node_type* model,data_node_type *new_data_node, std::vector<model_node_type*> *model_nodes_by_level, int *model_idx
-,int *parent_model_idx);
+,int *parent_model_idx,int max_model_height);
 
 void update_data_structure(model_node_type* best_node,std::vector<model_node_type*> *model_nodes,
 std::vector<model_node_type*> *model_nodes_by_level, std::vector<model_node_type*>* model_nodes_useful,
@@ -84,11 +79,9 @@ bool check_all_data_nodes(model_node_type* node);
 bool compare_models_new(const model_node_type* a, const model_node_type* b);
 void get_children_cost(model_node_type* model, double *children_cost,alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
 double search_const, double traversal_const);
-bool compare_searches_des(const data_node_type* a, const data_node_type* b);
 
 //====================
-
-
+int csv_node(std::vector<model_node_type*> model_nodes_useful_by_level, double poi_thres,double const_search, double const_traversal, int cutoff, size_t start, size_t end);
 
 void clearMemoryCache() {
       if (system("sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'") != 0) {
@@ -96,9 +89,18 @@ void clearMemoryCache() {
     }
 }
 
+std::mutex resultsMutex;
+std::unordered_map<int, std::tuple<
+                    std::pair<KEY_TYPE, PAYLOAD_TYPE> *,
+                    int,
+                    std::vector<KEY_TYPE>,
+                    int>> values_for_inner;
+
+alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index2;
+
 int main(int argc, char *argv[]){
 
-    clearMemoryCache();
+    // clearMemoryCache();
 
     std::string dataset_name = argv[1];
     std::string poi_size_str = argv[4];
@@ -107,10 +109,11 @@ int main(int argc, char *argv[]){
     
     bool benchmark = 1;
     
-    std::string data_folder = "data/";
+    //std::string data_folder = "data/";
+    std::string data_folder = "/data/";
     std::string data_output = data_folder + dataset_name+".bin";
 
-    bool poison = (argv[3][0] == '1');
+    bool smooth = (argv[3][0] == '1');
 
     
 
@@ -123,7 +126,6 @@ int main(int argc, char *argv[]){
 
     std::vector<KEY_TYPE> legitimate_data = read_data_bin(data_output);
     
-
     //PARAMETERS
     //===============
     
@@ -131,19 +133,18 @@ int main(int argc, char *argv[]){
     
     
     double original_poi_thres = 0;
-    std::string method = "nt3";
     
     KEY_TYPE P = orignal_P;
 
-    if(poison){
+    if(smooth){
         original_poi_thres = std::stod(poi_size_str);
-        method = "ntp3";
     }
     
     double poi_thres = original_poi_thres;
     long pois_count = poi_thres*legitimate_data.size();
     bool use_new_cost = true;
-    int num_total_poisoning = 0;
+    
+    int num_total_smooth = 0;
     int max_check = 20;
     
         
@@ -157,53 +158,32 @@ int main(int argc, char *argv[]){
 
     //filenames of the benchmark
     std::string model_output = "results/alex_model_output_real";
-    std::string original_output = "results/alex_original_index_full";
-    std::string original_changed_output = "results/alex_original_index_changed";
-    std::string poisoned_output = "results/alex_poisoned_index_full";
-    std::string poisoned_changed_output = "results/alex_poisoned_index_changed";
 
-    original_output = original_output+"_"+method+"_"+data_name2+"_"+data_size;
-    original_changed_output = original_changed_output+ "_"+method+"_"+data_name2+"_"+data_size;
+    std::string performance_output = "results/alex/rev3_alex_original_performance.csv";
+    std::string structure_output = "results/alex/rev3_alex_original_structure.csv";
 
-    poisoned_output = poisoned_output+"_"+method+"_"+data_name2+"_"+data_size;
-    poisoned_changed_output = poisoned_changed_output+ "_"+method+"_"+data_name2+"_"+data_size;
-
-    std::string bulk_index_output = "results/bulk_load_indexes.bin";
-    std::string insert_index_output = "results/insert_indexes.bin";
-
-    std::string bulk_data_output = "results/bulk_load_data.bin";
-    std::string insert_data_output = "results/insert_data.bin";
-
-    std::string performance_output = "results/alex/alex_original_performance.csv";
-    std::string structure_output = "results/alex/alex_original_structure.csv";
-
-    if(poison){
-        performance_output = "results/alex/alex_smooth_performance.csv";
-        structure_output = "results/alex/alex_smooth_structure.csv";
+    if(smooth){
+        performance_output = "results/alex/rev3_alex_smooth_performance.csv";
+        structure_output = "results/alex/rev3_alex_smooth_structure.csv";
     }
      std::string changed_data_output = "results/changed_data.bin";
-     std::string output_model_csv = "results/alex/alex_model_output_good.csv";
+     std::string output_model_csv = "results/alex/rev3_alex_model_output_good.csv";
 
     //To save the changed data
     std::vector<KEY_TYPE> changed_data;
     std::set<KEY_TYPE> full_data_changed;
     std::set<KEY_TYPE> poisoned_data;
+    
+    //Setting the approximate_model_computation parameter
+    index2.params_.approximate_model_computation = false;
 
-    //To save two Alex indexes for testing (original and edited) I only actually need the index
-    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index;
-    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index_original;
-
-    //ADDED THIS HERE
-    index.params_.approximate_model_computation = false;
-
-    //BULK LOAD IT (std::pair<KEY_TYPE, PAYLOAD_TYPE>[data.size()], data.size())
     //Create the values (append new payloads)
     std::mt19937_64 gen_payload(std::random_device{}());
 
     int values_size = legitimate_data.size();
    
     values_size = legitimate_data.size();
-    std::cout << "removed duplicates." << values_size << std::endl;
+    std::cout << "dataset without duplicates " << values_size << std::endl;
 
     //for inserts
     std::vector<int> all_indexes(values_size);
@@ -211,8 +191,6 @@ int main(int argc, char *argv[]){
     std::vector<int> insert_indexes;
 
     std::iota(all_indexes.begin(), all_indexes.end(), 0);
-
-    
 
     //Depending on the insertion 
     int numberOfIndexes = 0;
@@ -223,7 +201,7 @@ int main(int argc, char *argv[]){
         
         std::cout << "Insert." << values_size << std::endl;
 
-        std::string bulk_index_output = data_folder + "splits/"+  dataset_name +"_bulk.bin";
+        std::string bulk_index_output = data_folder + "Splits/"+  dataset_name +"_bulk.bin";
         bulk_load_indexes = readIndexesFromFile(bulk_index_output);
 
         std::vector<KEY_TYPE> subvector(bulk_load_indexes.size());
@@ -239,19 +217,15 @@ int main(int argc, char *argv[]){
         auto values = create_values(subvector,&numberOfIndexes);
         std::cout << "Created values" << std::endl;
        
-        index.bulk_load(values, numberOfIndexes);
+        index2.bulk_load(values, numberOfIndexes);
     }
     else{
         std::cout << "Creating values" << std::endl;
         auto values = create_values(legitimate_data, &values_size);
         std::cout << "Created values" << std::endl;
-
-        //index_original.bulk_load(values, values_size);
-        index.bulk_load(values, values_size);
-        std::cout << "Created index" << std::endl;
+        index2.bulk_load(values, values_size);
     }
     std::vector<int>().swap(all_indexes);
-    // std::vector<int>().swap(bulk_load_indexes);
 
     std::cout << "============================" << std::endl;
 
@@ -268,7 +242,7 @@ int main(int argc, char *argv[]){
     double const_traversal =  0;
 
     //Im getting the neccessary constants from here
-    get_constants(index,legitimate_data, 1000000, &const_search, &const_traversal);
+    get_constants(index2,legitimate_data, 1000000, &const_search, &const_traversal,insert,dataset_name);
 
     std::cout << "const_search " << const_search <<std::endl;
     std::cout << "const_traversal " << const_traversal <<std::endl;
@@ -281,7 +255,7 @@ int main(int argc, char *argv[]){
     int max_model_height =0;
     
     //Getting all nodes and seperates them by model nodes and data nodes also get the max model height
-    get_all_nodes( index, &nodes, &model_nodes,&data_nodes,&max_model_height);
+    get_all_nodes(index2, &nodes, &model_nodes,&data_nodes,&max_model_height);
 
     int original_model_nodes_number = model_nodes.size();
     int original_nodes_number = nodes.size();
@@ -290,13 +264,7 @@ int main(int argc, char *argv[]){
     std::cout << "Done: Gathered the nodes" << std::endl;
     std::cout << "============================" << std::endl;
     
-    // Add a different condition OR a different method
-    //======================
-    int num_pois = model_nodes.size() -1;
-
     int replaced_models_number = 0;
-
-    double pois_count_model = (pois_count/(1.0*num_pois));
 
     std::vector<model_node_type*> model_nodes_useful;
    
@@ -305,6 +273,7 @@ int main(int argc, char *argv[]){
     //Get the model nodes by level and the useful (all children are data nodes) models
     //I also calculate the children sum for these . (CHILDREN SUM IS  NO LONGER NEEDED)
     get_useful_model_nodes(&model_nodes, &model_nodes_useful, model_nodes_by_level);
+
     //Get the model nodes with all the children being data nodes.
     std::cout << "DONE: models useful and models by level" << std::endl;
     std::cout << "============================" << std::endl;
@@ -312,9 +281,9 @@ int main(int argc, char *argv[]){
     if(use_new_cost){
         //For useful models calculate the new cost
         //Calculates the new model costs
-        calculate_model_node_new_cost(model_nodes_useful,index,const_search,const_traversal); 
+        calculate_model_node_new_cost(model_nodes_useful,index2,const_search,const_traversal); 
         //Calculates the new children costs as well as the sum of children costs per model
-        calculate_data_node_new_cost_new(model_nodes_useful, index,const_search,const_traversal);     
+        calculate_data_node_new_cost_new(model_nodes_useful, index2,const_search,const_traversal);     
      }
 
     
@@ -325,11 +294,11 @@ int main(int argc, char *argv[]){
     //Get the difference between the model node and the children sum (now new cost)
     calculate_cost_difference(model_nodes_useful);
 
-    //std::sort(model_nodes_useful.begin(), model_nodes_useful.end(), compare_models);
     std::vector<model_node_type*> model_nodes_useful_by_level;
     
     //Get the model nodes useful in the max model height
     int current_level = max_model_height;
+    //current_level = 1;
 
     get_useful_model_nodes_by_level(&model_nodes_useful, &model_nodes_useful_by_level, current_level);
 
@@ -339,19 +308,17 @@ int main(int argc, char *argv[]){
     //Do for all the levels except the root (keep the root as it is)
     //Inner index to iterate through the models in the current level (reset in the outter while loop)
     int inner_idx = 0;
-    //To keep count of the number of models we have tried without use
-    int tried = 0;
-    int sucess =  0 ;
 
     std::vector<model_node_type*> best_nodes;
     std::vector<data_node_type*> replaced_data_nodes;
 
     std::vector<model_node_type*> new_useful_parents;
     std::vector<KEY_TYPE>  altered_data;
+    std::set<KEY_TYPE>  altered_data_set;
   
     bool continue_poi = true;
 
-    while(current_level > 0 && poison && continue_poi){
+    while(current_level > 0 && smooth && continue_poi){
 
         long model_level_size = 0;
 
@@ -359,11 +326,14 @@ int main(int argc, char *argv[]){
             model_level_size += model_nodes_useful_by_level[i]->num_keys_model_;
         }
 
+        //WHY IS THIS HERE
+        //===================
+        //======================
         if(model_level_size > 100000000){
             continue_poi = false;
             break;
         }
-        model_node_type* best_node;
+       
 
         //Sort the models in this level by their cost difference
         std::sort(model_nodes_useful_by_level.begin(), model_nodes_useful_by_level.end(), compare_models_new);
@@ -374,188 +344,123 @@ int main(int argc, char *argv[]){
         inner_idx = 0;
 
         // do until the model is not converted or more than 10 percent of the models are checked
-        //METHOD 1-5
         int size_to_check = model_nodes_useful_by_level.size();
-        
-        tried = 0;
-        sucess =  0; 
+
+
+        int numThreads = 64; // Set number of threads
+        size_t chunkSize = (size_to_check + numThreads - 1) / numThreads;
+        std::vector<std::thread> threads;        
+        //Finding the virtual points using threads
+
+        for(int num_thread = 0;num_thread< numThreads;num_thread++){
+            size_t start = num_thread * chunkSize;
+            size_t end = std::min(start + chunkSize, model_nodes_useful_by_level.size());
+
+            if (start < end) {
+                threads.emplace_back(csv_node, std::ref(model_nodes_useful_by_level),original_poi_thres,const_search,const_traversal,cutoff_ori, start, end);
+            }
+        }
+
+        for (auto& thread : threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
 
         //inner while to loop through the inner index until we reach the max models useful in the level
         //Stop if we have reached the max_check limit without changind a model to a data node.
         
+        for(int inner_idx2 = 0; inner_idx2< size_to_check; inner_idx2++ ){
 
-        while(inner_idx < size_to_check && tried < max_check){
-
-            if(inner_idx%1000 ==0){
-                std::cout << "starting " << inner_idx<<std::endl;
+            if(inner_idx2%1000 ==0){
+                std::cout << "starting " << inner_idx2<<std::endl;
             }
 
-            best_node = model_nodes_useful_by_level[inner_idx];
+           
+            model_node_type* best_node = model_nodes_useful_by_level[inner_idx2];
+            data_node_type* new_data_node ;
 
-
-            //Now get the data for this model node
-            double best_children_cost = 0;
-            std::vector<KEY_TYPE> model_node_data;
-            std::vector<PAYLOAD_TYPE> model_node_payload;
-
-            //Get the children data (aka all the model data) for the best node
-            //We don't need to recalculate the children cost because we have already calculated it before (useful models method last para false here)
-            //Also get the payloads
-            get_children_data(index, best_node, &model_node_data,&model_node_payload, &best_children_cost, const_search, const_traversal, false);
-
-            //Poison using the model data or till the cost is less than the children nodes sum of costs.
-            //Vector to hold the poisoned model data or if no poisoning use this as well. I put these outside the if becasue I need to use it in else as well
-            std::vector<KEY_TYPE> poisoned_model_data;
-            //poi_thres = (pois_count_model/(1.0*model_node_data.size()));
-            poi_thres = original_poi_thres;
-            //poi_thres = original_poi_thres*(max_model_height-current_level+1);
-            
-            int poisoned_model_data_size;
-            data_node_type* new_data_node;
-            int current_poi =0;
-
-            sucess++;
-            int cutoff = cutoff_ori ;
-            //If the cost differebce is greater than 0 meaning model cost > children cost try poisoning
-            if(best_node->cost_diff_ > (cutoff) || true){
                 
-                KEY_TYPE first_val = model_node_data[0];
-                shift_vector(&model_node_data, first_val);
+                auto&[poisoned_values, size, model_node_data, poisoned_model_data_size ] = values_for_inner[inner_idx2];
 
-                //Do the poisoning for the model data
-                poisoned_model_data = perform_poisoning(model_node_data, poi_thres);
+                if(best_node->cost_diff_ > (cutoff_ori) || true){
 
-                shift_back_vector(&poisoned_model_data, first_val);
-                shift_back_vector(&model_node_data, first_val);
+                if(size > 2){
 
+                new_data_node = create_new_data_node(index2 , best_node, poisoned_values,model_node_data, poisoned_model_data_size, size,
+                    const_search, const_traversal);
 
-                poisoned_model_data_size = poisoned_model_data.size();
+                int current_poi = poisoned_model_data_size - size;
 
-                //get new values for the poisoning data while using the old ones for the existing
-                auto poisoned_values = get_poisoned_values(model_node_data, poisoned_model_data, model_node_payload, poisoned_model_data_size);
-               
-                //Create a new data node using these poisoned values
+                // condition to change the nodes
+                int best_level = best_node->level_;
+                int best_node_idx = 0;
+                bool parent_found = false;
+                int parent_model_idx = 0;
 
-               //ALso check the max data node number here itself
-               //Add a constant that if there were no new points also save
-                 if(index.derived_params_.max_data_node_slots *data_node_type::kInitDensity_ <= poisoned_model_data_size ){
+                //If the cost of the new data is higher than the children or there is no more space then try the next best node
+                //Change the condition here
+                
+                if((new_data_node->cost_ - best_node->children_cost) > (cutoff_ori) || index2.derived_params_.max_data_node_slots *data_node_type::kInitDensity_ <= poisoned_model_data_size){
                     inner_idx++;
-                    tried++;
                     continue;
                 }
 
-                new_data_node = create_new_data_node(index , best_node, poisoned_values,model_node_data, poisoned_model_data_size, model_node_data.size(),
-                const_search, const_traversal);
-                current_poi = poisoned_model_data_size - model_node_data.size();
-            }
-            //Can directly create a new data node instead of a model
-            else{
-                
+                double best_children_cost_new = 0;
+                std::vector<KEY_TYPE> model_node_data_new;
+                std::vector<PAYLOAD_TYPE> model_node_payload_new;
 
-                    auto values_real = new std::pair<KEY_TYPE, PAYLOAD_TYPE>[model_node_data.size()];
-                    //std::mt19937_64 gen_payload(std::random_device{}());
+                //Get the children data (aka all the model data) for the best node
+                //We don't need to recalculate the children cost because we have already calculated it before (useful models method last para false here)
+                //Also get the payloads
+                std::vector<KEY_TYPE>  poi_data;
+                get_data_node_data(index2, new_data_node, &model_node_data_new);
+                find_difference(&poi_data,model_node_data, model_node_data_new);
 
-                        for (int i = 0; i < model_node_data.size(); i++) {
-                            values_real[i].first = model_node_data[i];
-                            values_real[i].second = model_node_payload[i];
+                for(const auto& element : poi_data){
+                    poisoned_data.insert(element);
+                }
+                        for (KEY_TYPE element : model_node_data) {
+                        // Check if the element is not in the original vector
+                            // If not found, add it to the original vector
+                            full_data_changed.insert(element);
+                            if (poisoned_data.find(element) == poisoned_data.end()) {
+                                // Add the element to the result vector
+                                //altered_data_set.insert(element);
+                                altered_data.push_back(element);
                             }
-                
-
-                //Create a new data node using these values
-                //Also check if index.derived_params_.max_data_node_slots *data_node_type::kInitDensity_ before creating the new data nodes
-                if(index.derived_params_.max_data_node_slots *data_node_type::kInitDensity_ <= model_node_data.size()){
-                    inner_idx++;
-                    tried++;
-                    continue;
-                }
-                
-                new_data_node = create_new_data_node(index , best_node, values_real,model_node_data, model_node_data.size(), model_node_data.size(),
-                const_search, const_traversal);
-                
-
-                poisoned_model_data_size = model_node_data.size();
-            }
-
-
-            // condition to change the nodes
-            int best_level = best_node->level_;
-            int best_node_idx = 0;
-            bool parent_found = false;
-            int parent_model_idx = 0;
-
-            //If the cost of the new data is higher than the children or there is no more space then try the next best node
-            //Change the condition here
-            
-            if((new_data_node->cost_ - best_node->children_cost) > (cutoff) || index.derived_params_.max_data_node_slots *data_node_type::kInitDensity_ <= poisoned_model_data_size){
-                inner_idx++;
-                tried++;
-                continue;
-            }
-
-            double best_children_cost_new = 0;
-            std::vector<KEY_TYPE> model_node_data_new;
-            std::vector<PAYLOAD_TYPE> model_node_payload_new;
-
-            //Get the children data (aka all the model data) for the best node
-            //We don't need to recalculate the children cost because we have already calculated it before (useful models method last para false here)
-            //Also get the payloads
-            std::vector<KEY_TYPE>  poi_data;
-            get_data_node_data(index, new_data_node, &model_node_data_new);
-            find_difference(&poi_data,model_node_data, model_node_data_new);
-
-            for(const auto& element : poi_data){
-                poisoned_data.insert(element);
-            }
-                    for (KEY_TYPE element : model_node_data) {
-                    // Check if the element is not in the original vector
-                        // If not found, add it to the original vector
-                        full_data_changed.insert(element);
-                        if (poisoned_data.find(element) == poisoned_data.end()) {
-                            // Add the element to the result vector
-                            altered_data.push_back(element);
+                    
                         }
+                    
+                //this means we are going to replace the model node with the new data node 
+                    
+                //find the parent of this new data node aka the old best node
+                std::vector<model_node_type*> parents;
                 
-                    }
+                new_data_node = static_cast<data_node_type*>(new_data_node);
                 
-            
-            
-            tried = 0;
-
-            //this means we are going to replace the model node with the new data node 
+                //Change the parent's child to this new data node pointer
+                parents = replace_parents(best_node, new_data_node, model_nodes_by_level, &best_node_idx, &parent_model_idx, max_model_height);
                 
-            //find the parent of this new data node aka the old best node
-            std::vector<model_node_type*> parents;
-            
-            new_data_node = static_cast<data_node_type*>(new_data_node);
-            
-            //Change the parent's child to this new data node pointer
-            parents = replace_parents(best_node, new_data_node, model_nodes_by_level, &best_node_idx, &parent_model_idx);
-            
-            //IF I REALLY NEEDED TO CHECK, THEN I COULD GET THE NODES FROM THE INDEX AGAIN AND CHECK (ALL PREV NODES WILL COME, BUT THERE WILL BE NO LINK)]
-            // TO DO
-            // ADD A NEW COST MODEL IN alex_nodes.h NEED TO ACCOUNT FOR THE DEPTH AS WELL DEPTH VS.
-            // ALSO NEED TO MAKE SURE ALL THE DATA CAN BE FITTED IN THE NEW DATA NODE (SIMPLE IF STATEMENT WITH MAX_NODE SIZE AFTER FINDING BEST NODE)
-            // CALCULATE IT INSTEAD OF THE COST FOR BOTH MODEL AND CHILDREN
-            // CHECK IF ITS BETTER.
-            //  IF SO DO THE REST OF IT 
+                //Removing from the vectors 
 
-            //Removing from the vectors 
+                //find and delete from model_nodes, model_nodes_by_level and model_nodes_useful also check if parent is
+                // a useful model node (all children are data nodes) then add that to the model_nodes_useful
+                (new_useful_parents).clear();
+                update_data_structure(best_node, &model_nodes, model_nodes_by_level, &model_nodes_useful,&model_nodes_useful_by_level, parents,
+                index2,const_search,const_traversal,&new_useful_parents);
 
-            //find and delete from model_nodes, model_nodes_by_level and model_nodes_useful also check if parent is
-            // a useful model node (all children are data nodes) then add that to the model_nodes_useful
-            (new_useful_parents).clear();
-            update_data_structure(best_node, &model_nodes, model_nodes_by_level, &model_nodes_useful,&model_nodes_useful_by_level, parents,
-            index,const_search,const_traversal,&new_useful_parents);
 
-            replaced_models_number++;
+                replaced_models_number++;
 
-            model_converted = true;
+                model_converted = true;
+                
+                num_total_smooth += current_poi;
+                }
+            }
             
-            num_total_poisoning += current_poi;
-            //If model is converted then set tried back to 0 and increase the inner_idx
             if(model_converted){
                 inner_idx++;
-                tried = 0;
             }
 
         }
@@ -567,18 +472,17 @@ int main(int argc, char *argv[]){
         current_level--;
         if(current_level  > 0){
             //Get the new models by level from model nodes useful (which we update in the update_data_structures
+            (model_nodes_useful_by_level).clear();
             get_useful_model_nodes_by_level(&model_nodes_useful, &model_nodes_useful_by_level, current_level);
 
         }
             
     }
 
-    if(insert){
-   
-        for(int i : insert_indexes){
-            index.insert(legitimate_data[i],static_cast<PAYLOAD_TYPE>(gen_payload()));
-        }
-    }
+    //index2.link_all_data_nodes();
+
+    auto stop_tra = std::chrono::high_resolution_clock::now();
+    
     
     std::sort(changed_data.begin(), changed_data.end());
     std::vector<node_type*> nodes_fin;
@@ -591,11 +495,14 @@ int main(int argc, char *argv[]){
     //Printing information at the end
     int max_model_height_fin = 0;
     
+    
 
-    get_all_nodes(index, &nodes_fin, &model_nodes_fin,&data_nodes_fin, &max_model_height_fin);
+    get_all_nodes(index2, &nodes_fin, &model_nodes_fin,&data_nodes_fin, &max_model_height_fin);
 
-    auto stop_tra = std::chrono::high_resolution_clock::now();
+    //std::vector<KEY_TYPE>  altered_data(altered_data_set.begin(), altered_data_set.end());
 
+    //GET NODE STATS 
+    //=====================
     //Original information
     std::cout << "====================" << std::endl;
 
@@ -615,29 +522,33 @@ int main(int argc, char *argv[]){
     std::cout << "model_nodes : "<< model_nodes.size() << std::endl;
     std::cout << "model_nodes_useful " << model_nodes_useful.size() << std::endl;
     std::cout << "Replaced number " << replaced_models_number <<std::endl;
-    std::cout << "Poisoned number " << num_total_poisoning <<std::endl;
+    std::cout << "Poisoned number " << num_total_smooth <<std::endl;
     
 
     long tra_time = std::chrono::duration_cast<std::chrono::nanoseconds>(stop_tra - start_tra).count();
 
+
     size_t total_data_count = 0;
     size_t total_node_count = 0;
 
-    std::string structure_results = "ALEX;" + data_name + ";" + std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
+    std::string structure_results = "ALEX;" + data_name + ";" + std::to_string(smooth) + ";"+ std::to_string(insert) + ";" +
           std::to_string(orignal_P)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
-        + std::to_string(num_total_poisoning)+";"+ (poi_size_str) +";"
+        + std::to_string(num_total_smooth)+";"+ (poi_size_str) +";"
         + std::to_string(altered_data.size())+ ";Data";
 
     std::vector<model_node_type*> *model_nodes_by_level_fin = new std::vector<model_node_type*>[max_model_height_fin + 1];
+
+    
+
     get_useful_model_nodes(&model_nodes_fin, &model_nodes_useful_fin, model_nodes_by_level_fin);
 
-    //TO BENCHMARK LEVELS
+    //BENCHMARKING LEVEL DETAILS
     double loss_value = 0.0;
     double mse = 0.0;
     std::string data_node_info = "Data Nodes";
     std::string model_node_info = "Model Nodes";
 
-
+    //For each of the levels of the index get the relavant data
     for(int i = 1; i <= max_model_height+1 ; i++ ){
         std::cout << "Performance For Level  " << i << std::endl;
         std::vector<data_node_type*> data_nodes_level;
@@ -645,8 +556,6 @@ int main(int argc, char *argv[]){
         get_data_nodes_by_level(&data_nodes_fin,&data_nodes_level,i);
         std::cout << "Data nodes number  " << data_nodes_level.size() << std::endl;
 
-        
-        // get_useful_model_nodes_by_level(&model_nodes_fin,&model_nodes_level,i);
         get_useful_model_nodes_by_level(&model_nodes_useful_fin,&model_nodes_level,i);
         std::cout << "model nodes number  " << model_nodes_level.size() << std::endl;
         
@@ -663,69 +572,39 @@ int main(int argc, char *argv[]){
         }
 
         structure_results = structure_results + ";" + std::to_string(level_data.size());
-        // benchmark_alex_real_seperate(index_original, level_data, level_data, "ALEX", data_name, poi_thres, original_changed_output);
-        //poison_all_data_nodes(index,&data_nodes_level, poi_thres, const_search, const_traversal, &num_total_poisoning, &changed_data);
 
-        for(data_node_type* node : data_nodes_level){
-            std::vector<KEY_TYPE> x;
-            get_data_node_data(index, node, &x);
-
-            int n = x.size();
-            if(n <= 1){
-                continue;
-            }
-            shift_vector(&x, x[0]);
-
-            std::vector<int> y(n);
-            std::iota(y.begin(), y.end(), 0);
-            long double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXSquare = 0.0;
-
-            for(int i =0; i < n;i++){
-                sumX += static_cast<long double>(x[i]);
-                sumY += y[i];
-                sumXY += static_cast<long double>(x[i]) * y[i];
-                sumXSquare += static_cast<long double>(x[i]) * static_cast<long double>(x[i]);
-            }
-
-            double numerator = n * sumXY - sumX * sumY;
-            double denominator = n * sumXSquare - sumX * sumX;
-
-            double a = numerator / denominator;
-            double b = (sumY - a * sumX) / n;
-
-            
-            for (int i = 0; i < n; ++i) {
-                double predictedY = b + a * x[i];
-                double error = predictedY - y[i];
-                loss_value += error * error;
-            }
-            mse = loss_value/(1.0*n);
-            }
+        
     }
-
-    structure_results = structure_results + ";losses;" + std::to_string(loss_value)+ ";" + std::to_string(mse);
+    std::vector<KEY_TYPE> lookup_changed;
+    int altered_data_size = altered_data.size();
+    
+    structure_results = structure_results + ";losses;" + std::to_string(loss_value)+ ";" + std::to_string(mse)+ ";" + std::to_string(altered_data_size);;
 
      structure_results = structure_results + ";" + data_node_info + ";" + model_node_info;
     saveToCSV(structure_results,structure_output);
-    std::cout << "Poisoned number " << num_total_poisoning <<std::endl;
+    std::cout << "Poisoned number " << num_total_smooth <<std::endl;
 
-    // std::vector<KEY_TYPE> lookup_keys = get_search_keys(legitimate_data, values_size, 1000000, seed);
-    // std::vector<KEY_TYPE> lookup_keys_zipf = get_search_keys_zipf(legitimate_data, values_size, 1000000, seed);
+    //Loading the altered data or saving it
+    
 
-
-    if(poison){
-        save_data_bin(altered_data,changed_data_output);
+    if(smooth){
+        lookup_changed = get_search_keys(altered_data, altered_data_size, 1000000, seed);
+        save_data_bin(lookup_changed,changed_data_output);
     }
-    if(!poison&benchmark){
-        altered_data.clear();
-        altered_data = read_data_bin(changed_data_output);
+    if(!smooth&benchmark){
+        lookup_changed.clear();
+        lookup_changed = read_data_bin(changed_data_output);
+       
     }
 
-    //BENCHMARKING FOR INSET & BULK
-//========================
-std::vector<KEY_TYPE> lookup_keys;
-std::vector<KEY_TYPE> lookup_keys_zipf;
+    //BENCHMARKING FOR INSERTS & READ-ONLY
+    //========================
 
+    //To hold the lookup keys
+    std::vector<KEY_TYPE> lookup_keys;
+    std::vector<KEY_TYPE> lookup_keys_zipf;
+
+    //If inserts then select only from the original bulkloaded keys
     if(insert){
         std::vector<KEY_TYPE> bulk_vector(bulk_load_indexes.size());
         bulk_vector.clear();
@@ -738,49 +617,60 @@ std::vector<KEY_TYPE> lookup_keys_zipf;
 
         lookup_keys_zipf = get_search_keys_zipf(bulk_vector, bulk_size, 1000000, seed);
         
-        
-        benchmark_alex_real_seperate(index,altered_data, altered_data, "ALEX", data_name+"_changed", poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
+        //Performing the query to measure the original times
+        benchmark_alex_real_seperate(index2,lookup_changed, lookup_changed, "ALEX", data_name+"_changed", poi_thres, performance_output,
+         smooth,insert,poi_size_str,insert_threshold);
 
-        benchmark_alex_real_seperate(index,lookup_keys, lookup_keys, "ALEX", data_name+"_lookup", poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
-         benchmark_alex_real_seperate(index,lookup_keys_zipf, lookup_keys_zipf, "ALEX", data_name+ "_lookup_zipf", poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
+        benchmark_alex_real_seperate(index2,lookup_keys, lookup_keys, "ALEX", data_name+"_lookup", poi_thres, performance_output,
+         smooth,insert,poi_size_str,insert_threshold);
+        // benchmark_alex_real_seperate(index2,lookup_keys_zipf, lookup_keys_zipf, "ALEX", data_name+ "_lookup_zipf", poi_thres, performance_output,
+        //  smooth,insert,poi_size_str,insert_threshold);
 
     }
+    //If read-only then just collect the keys.
     else{
         lookup_keys = get_search_keys(legitimate_data, values_size, 1000000, seed);
         lookup_keys_zipf = get_search_keys_zipf(legitimate_data, values_size, 1000000, seed);
     }
 
-     size_t index_size_after =  index.data_size() + index.model_size() ;
+     size_t index_size_after =  index2.data_size() + index2.model_size() ;
 
-    std::string model_results = "ALEX;" + data_name + ";" + std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
+    std::string model_results = "ALEX;" + data_name + ";" + std::to_string(smooth) + ";"+ std::to_string(insert) + ";" +
           (poi_size_str)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
-        + std::to_string(num_total_poisoning) + ";" + std::to_string(max_model_height) + ";" + std::to_string(index_size_after) + ";" +
+        + std::to_string(num_total_smooth) + ";" + std::to_string(max_model_height) + ";" + std::to_string(index_size_after) + ";" +
         std::to_string(total_node_count) + ";" + std::to_string(total_data_count) + ";" + std::to_string(tra_time)  ;
 
         // std::cout << test_output <<std::endl; 
         saveToCSV(model_results,output_model_csv);
 
     if(insert){
-   
+
+        std::cout << "pois " << poisoned_data.size() << std::endl;
+        int idx = 0;
+        for(const auto& element : poisoned_data){
+                    int num = index2.erase(element);
+                    if(num == 0){ 
+                        // std::cout << "Zero " << idx << std::endl;
+                        idx++;
+                    }
+        }
+
+        //For the 5 insert batches
         for(int j = 0; j < 5; j++){
             insert_threshold = (j+1)*0.1;
-            std::string structure_results2 = "ALEX;" + dataset_name + "_insert_"+std::to_string(j) +";" + std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
+            std::string structure_results2 = "ALEX;" + dataset_name + "_insert_"+std::to_string(j) +";" + std::to_string(smooth) + ";"+ std::to_string(insert) + ";" +
           std::to_string(orignal_P)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
-        + std::to_string(num_total_poisoning);
+        + std::to_string(num_total_smooth);
 
             std::vector<KEY_TYPE>  inserted_data;
         
-            std::string insert_index_output = data_folder+ "splits/"+ data_name +"_insert"+"_"+std::to_string(j)+".bin";
+            std::string insert_index_output = data_folder+ "Splits/"+ data_name +"_insert"+"_"+std::to_string(j)+".bin";
             std::vector<int> insert_indexes2 = readIndexesFromFile(insert_index_output);
 
 
             auto start = std::chrono::high_resolution_clock::now();
             for(int i : insert_indexes2){
-                //index_original.insert(legitimate_data[i],static_cast<PAYLOAD_TYPE>(gen_payload()));
-                index.insert(legitimate_data[i],static_cast<PAYLOAD_TYPE>(gen_payload()));
+                index2.insert(legitimate_data[i],static_cast<PAYLOAD_TYPE>(gen_payload()));
                 //inserted_data.push_back(legitimate_data[i]);
             }
 
@@ -788,153 +678,108 @@ std::vector<KEY_TYPE> lookup_keys_zipf;
             auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count()/(1.0*insert_indexes2.size());
 
             std::cout << "Inserted " << insert_indexes2.size() << std::endl;
-        //     benchmark_lipp_real(index,inserted_data, inserted_data, "LIPP", dataset_name+ "_changed", poi_thres, performance_output,
+        //  benchmark_lipp_real(index,inserted_data, inserted_data, "LIPP", dataset_name+ "_changed", poi_thres, performance_output,
         //  poison,insert,orignal_P,insert_threshold);
         //  benchmark_lipp_real(index,lookup_keys, lookup_keys, "LIPP", dataset_name+"_lookup", poi_thres, performance_output,
         //  poison,insert,orignal_P,insert_threshold);
         //  benchmark_lipp_real(index,lookup_keys_zipf, lookup_keys_zipf, "LIPP", dataset_name+ "_lookup_zipf", poi_thres, performance_output,
         //  poison,insert,orignal_P,insert_threshold);
 
-    //index_original.scan_and_destory_tree(nodes[0], keys, values,false);
-    size_t total_node_count2 = 0;
-    size_t total_data_count2 = 0;
-    std::string data_node_info2 = "Data Nodes";
-    std::string model_node_info2 = "Model Nodes";
-
-    // std::string structure_results = "LIPP;" + dataset_name + ";" + std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
-    //       std::to_string(orignal_P)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
-    //     + std::to_string(num_total_poisoning);
-
-        // std::cout << test_output <<std::endl; 
-    
-    std::vector<node_type*> nodes_fin2;
-    std::vector<model_node_type*> model_nodes_fin2;
-    std::vector<data_node_type*> data_nodes_fin2;
-    std::vector<model_node_type*> model_nodes_useful_fin2;
-
-    //Getting all the nodes from the index and the maximum height (default is 0 aka root node only)
-    //Printing information at the end
-    int max_model_height_fin2 = 0;
-    get_all_nodes(index, &nodes_fin2, &model_nodes_fin2,&data_nodes_fin2, &max_model_height_fin2);
-    std::cout << "Height " << max_model_height_fin2 << std::endl;
-
-    for(int i = 1; i <= max_model_height_fin2+1 ; i++ ){
+        size_t total_node_count2 = 0;
+        size_t total_data_count2 = 0;
+        std::string data_node_info2 = "Data Nodes";
+        std::string model_node_info2 = "Model Nodes";
         
-       std::cout << "Performance For Level  " << i << std::endl;
-        std::vector<data_node_type*> data_nodes_level;
-        std::vector<model_node_type*> model_nodes_level;
-        get_data_nodes_by_level(&data_nodes_fin2,&data_nodes_level,i);
-        std::cout << "Data nodes number  " << data_nodes_level.size() << std::endl;
+        std::vector<node_type*> nodes_fin2;
+        std::vector<model_node_type*> model_nodes_fin2;
+        std::vector<data_node_type*> data_nodes_fin2;
+        std::vector<model_node_type*> model_nodes_useful_fin2;
 
-        
-        // get_useful_model_nodes_by_level(&model_nodes_fin,&model_nodes_level,i);
-        get_useful_model_nodes_by_level(&model_nodes_fin2,&model_nodes_level,i);
-        std::cout << "model nodes number  " << model_nodes_level.size() << std::endl;
-        
-        data_node_info2  = data_node_info2 + ";" + std::to_string(data_nodes_level.size());
-        model_node_info2  = model_node_info2 + ";" + std::to_string(model_nodes_level.size());
-        
-        std::vector<KEY_TYPE> level_data;
-        get_data_by_level(&data_nodes_level, &level_data);
+        //Getting all the nodes from the index and the maximum height (default is 0 aka root node only)
+        //Printing information at the end
+        int max_model_height_fin2 = 0;
+        get_all_nodes(index2, &nodes_fin2, &model_nodes_fin2,&data_nodes_fin2, &max_model_height_fin2);
+        std::cout << "Height " << max_model_height_fin2 << std::endl;
 
-        std::cout << "data number  " << level_data.size() << std::endl;
-        if(i>0){
-            total_data_count2 += level_data.size();
-            total_node_count2 += data_nodes_level.size() + model_nodes_level.size();
+        for(int i = 1; i <= max_model_height_fin2+1 ; i++ ){
+            
+        std::cout << "Performance For Level  " << i << std::endl;
+            std::vector<data_node_type*> data_nodes_level;
+            std::vector<model_node_type*> model_nodes_level;
+            get_data_nodes_by_level(&data_nodes_fin2,&data_nodes_level,i);
+            std::cout << "Data nodes number  " << data_nodes_level.size() << std::endl;
+
+            
+            // get_useful_model_nodes_by_level(&model_nodes_fin,&model_nodes_level,i);
+            get_useful_model_nodes_by_level(&model_nodes_fin2,&model_nodes_level,i);
+            std::cout << "model nodes number  " << model_nodes_level.size() << std::endl;
+            
+            data_node_info2  = data_node_info2 + ";" + std::to_string(data_nodes_level.size());
+            model_node_info2  = model_node_info2 + ";" + std::to_string(model_nodes_level.size());
+            
+            std::vector<KEY_TYPE> level_data;
+            get_data_by_level(&data_nodes_level, &level_data);
+
+            std::cout << "data number  " << level_data.size() << std::endl;
+            if(i>0){
+                total_data_count2 += level_data.size();
+                total_node_count2 += data_nodes_level.size() + model_nodes_level.size();
+            }
+
+            structure_results2 = structure_results2 + ";" + std::to_string(level_data.size());
+        // }
+            // if(level_data.size() > 0){
+            //     std::vector<KEY_TYPE> lookup_keys_level2 = get_search_keys(level_data, level_data.size(), 1000000, seed);
+
+            //     benchmark_alex_real_seperate(index,lookup_keys_level2, lookup_keys_level2, "ALEX", dataset_name+"_lookup_level_"+std::to_string(i)+ "_insert_"+std::to_string(j), 
+            //         poi_thres, performance_output,
+            //     smooth,insert,poi_size_str,insert_threshold);
+            // }
+            
         }
 
-        structure_results2 = structure_results2 + ";" + std::to_string(level_data.size());
-    // }
-        if(level_data.size() > 0){
-            std::vector<KEY_TYPE> lookup_keys_level2 = get_search_keys(level_data, level_data.size(), 1000000, seed);
+            benchmark_alex_real_seperate(index2,lookup_changed, lookup_changed, "ALEX", dataset_name+"_changed"+ "_insert_"+std::to_string(j),
+                poi_thres, performance_output,smooth,insert,poi_size_str,insert_threshold);
 
-            // benchmark_alex_real_seperate(index,lookup_keys_level2, lookup_keys_level2, "ALEX", dataset_name+"_lookup_level_"+std::to_string(i)+ "_insert_"+std::to_string(j), 
-            //     poi_thres, performance_output,
-            // poison,insert,poi_size_str,insert_threshold);
-        }
+            benchmark_alex_real_seperate(index2,lookup_keys, lookup_keys, "ALEX", dataset_name+"_lookup"+ "_insert_"+std::to_string(j),
+                poi_thres, performance_output,smooth,insert,poi_size_str,insert_threshold);
+            // benchmark_alex_real_seperate(index2,lookup_keys_zipf, lookup_keys_zipf, "ALEX", dataset_name+ "_lookup_zipf"+ "_insert_"+std::to_string(j), poi_thres, performance_output,
+            // smooth,insert,poi_size_str,insert_threshold);
+
+            std::vector<KEY_TYPE> insert_vector(insert_indexes2.size());
+            insert_vector.clear();
+
+            // std::transform(insert_indexes2.begin(), insert_indexes2.end(), std::back_inserter(insert_vector),
+            //         [&legitimate_data](int index) { return legitimate_data[index]; });
+
+            // benchmark_alex_real_seperate(index2,insert_vector, insert_vector, "ALEX", dataset_name+ "_insert"+ "_insert_"+std::to_string(j), poi_thres, performance_output,
+            // smooth,insert,poi_size_str,insert_threshold);
+            
+            structure_results2 = structure_results2 + ";" + data_node_info2 + ";" + model_node_info2+ ";"+ std::to_string(duration);
+            saveToCSV(structure_results2,structure_output);
+
+            size_t index_size_after2 =  index2.data_size() + index2.model_size() ;
         
-        }
+            std::string model_results = "ALEX;" + data_name + "_insert_"+std::to_string(j)+ ";" + std::to_string(smooth) + ";"+ std::to_string(insert) + ";" +
+            (poi_size_str)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
+            + std::to_string(num_total_smooth) + ";" + std::to_string(max_model_height_fin2) + ";" + std::to_string(index_size_after2) + ";" +
+            std::to_string(total_node_count2) + ";" + std::to_string(total_data_count2) + ";" + std::to_string(tra_time)  ;
 
-        benchmark_alex_real_seperate(index,altered_data, altered_data, "ALEX", dataset_name+"_changed"+ "_insert_"+std::to_string(j),
-            poi_thres, performance_output,poison,insert,poi_size_str,insert_threshold);
-
-        benchmark_alex_real_seperate(index,lookup_keys, lookup_keys, "ALEX", dataset_name+"_lookup"+ "_insert_"+std::to_string(j),
-            poi_thres, performance_output,poison,insert,poi_size_str,insert_threshold);
-        benchmark_alex_real_seperate(index,lookup_keys_zipf, lookup_keys_zipf, "ALEX", dataset_name+ "_lookup_zipf"+ "_insert_"+std::to_string(j), poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
-
-         std::vector<KEY_TYPE> insert_vector(insert_indexes2.size());
-
-        //subvector.resize(bulk_load_indexes.size());
-        insert_vector.clear();
-
-        std::transform(insert_indexes2.begin(), insert_indexes2.end(), std::back_inserter(insert_vector),
-                   [&legitimate_data](int index) { return legitimate_data[index]; });
-
-        benchmark_alex_real_seperate(index,insert_vector, insert_vector, "ALEX", dataset_name+ "_insert"+ "_insert_"+std::to_string(j), poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
-        
-        structure_results2 = structure_results2 + ";" + data_node_info2 + ";" + model_node_info2+ ";"+ std::to_string(duration);
-        saveToCSV(structure_results2,structure_output);
-
-        size_t index_size_after2 =  index.data_size() + index.model_size() ;
-    
-    std::string model_results = "ALEX;" + data_name + "_insert_"+std::to_string(j)+ ";" + std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
-          (poi_size_str)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
-        + std::to_string(num_total_poisoning) + ";" + std::to_string(max_model_height_fin2) + ";" + std::to_string(index_size_after2) + ";" +
-        std::to_string(total_node_count2) + ";" + std::to_string(total_data_count2) + ";" + std::to_string(tra_time)  ;
-
-        // std::cout << test_output <<std::endl; 
-        saveToCSV(model_results,output_model_csv);
-
-       // int count_issues = 0;
-    //index.link_all_data_nodes();
-    //index.validate_structure(true);
-    //  for(int k : insert_indexes2){
-    //         int ss = index.count(legitimate_data[k]);
-    //         if(ss <=0){
-    //             count_issues++;
-                
-    //         }
-    //     }
-        //std::cout << "Issues " << count_issues << std::endl;
+            saveToCSV(model_results,output_model_csv);
 
         }
     }
 
     if(benchmark && !insert){
-        //  size_t index_size_after =  index.data_size() + index.model_size() ;
-        // //benchmark_alex_real(index, changed_data, changed_data, "ALEX", data_name, poi_thres, poisoned_changed_output);
-        // std::ofstream file;
-        // file.open(model_output+".txt", std::ios_base::app);
-    
-        // file << "ALEX" << ";" << data_name << ";"  << insert << ";" << insert_threshold << ";"<< legitimate_data.size() << ";" << orignal_P << ";"
-        // << num_total_poisoning << ";"<< max_model_height << ";" << index_size_after << ";" <<
-        // total_node_count << ";" << total_data_count << ";" << std::endl;
-
-        // file.close();
+       
         std::cout << "Performance " << std::endl;
        
-         benchmark_alex_real_seperate(index,altered_data, altered_data, "ALEX", data_name+ "_changed", poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
-         benchmark_alex_real_seperate(index,lookup_keys, lookup_keys, "ALEX", data_name+"_lookup", poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
-         benchmark_alex_real_seperate(index,lookup_keys_zipf, lookup_keys_zipf, "ALEX", data_name+ "_lookup_zipf", poi_thres, performance_output,
-         poison,insert,poi_size_str,insert_threshold);
-
-
-        // std::string model_results = "ALEX;" + data_name + ";" + std::to_string(poison) + ";"+ std::to_string(insert) + ";" +
-        //   (poi_size_str)  + ";"  + std::to_string(insert_threshold) + ";" +std::to_string(legitimate_data.size()) +";"
-        // + std::to_string(num_total_poisoning) + ";" + std::to_string(max_model_height) + ";" + std::to_string(index_size_after) + ";" +
-        // std::to_string(total_node_count) + ";" + std::to_string(total_data_count) + ";" + std::to_string(tra_time)  ;
-
-        // saveToCSV(model_results,output_model_csv);
-         
-        // file.open(model_output+".txt", std::ios_base::app);
-        // file << "ALEX " << ";" << data_name << ";" << data_size << ";"<< method <<";" << original_poi_thres << ";" << num_total_poisoning <<";"<< original_nodes_number << ";" << original_model_nodes_number << ";" << original_data_nodes_number << ";" 
-        // << nodes_fin.size() << ";" << model_nodes_fin.size() << ";" << data_nodes_fin.size() <<  ";"  << replaced_models_number << ";" << tra_time << std::endl;
-
-        // file.close();
+         benchmark_alex_real_seperate(index2,lookup_changed, lookup_changed, "ALEX", data_name+ "_changed", poi_thres, performance_output,
+         smooth,insert,poi_size_str,insert_threshold);
+         benchmark_alex_real_seperate(index2,lookup_keys, lookup_keys, "ALEX", data_name+"_lookup", poi_thres, performance_output,
+         smooth,insert,poi_size_str,insert_threshold);
+        //  benchmark_alex_real_seperate(index2,lookup_keys_zipf, lookup_keys_zipf, "ALEX", data_name+ "_lookup_zipf", poi_thres, performance_output,
+        //  smooth,insert,poi_size_str,insert_threshold);
 
     }
 
@@ -955,16 +800,8 @@ void shift_vector(std::vector<KEY_TYPE>* vec, KEY_TYPE key) {
         return; // If the vector is empty, no need to shift
     }
 
-    // Find the minimum value in the vector
-    //KEY_TYPE minVal = vec[0];
-
     // Shift all elements by subtracting the minimum value
     KEY_TYPE offset = -key;
-
-    // Add the offset to each element in the vector
-    // for (KEY_TYPE& num : (*vec)) {
-    //     num += offset;
-    // }
     std::transform((*vec).begin(), (*vec).end(), (*vec).begin(), [offset](KEY_TYPE& element) {
         return element + offset;
     });
@@ -974,26 +811,13 @@ void shift_back_vector(std::vector<KEY_TYPE>* vec, KEY_TYPE key) {
     if ((*vec).empty()) {
         return; // If the vector is empty, no need to shift
     }
-
-    // Find the minimum value in the vector
-    //KEY_TYPE minVal = vec[0];
-
     // Shift all elements by subtracting the minimum value
     KEY_TYPE offset = key;
 
-    // Add the offset to each element in the vector
-    // for (KEY_TYPE& num : (*vec)) {
-    //     num += offset;
-    // }
     std::transform((*vec).begin(), (*vec).end(), (*vec).begin(), [offset](KEY_TYPE& element) {
         return element + offset;
     });
 }
-
-bool compare_searches_des(const data_node_type* a, const data_node_type* b) {
-        return a->expected_exp_search_iterations_ > b->expected_exp_search_iterations_;
-}
-
 
 bool compare_models_new(const model_node_type* a, const model_node_type* b) {
         return a->cost_diff_ < b->cost_diff_;
@@ -1021,130 +845,12 @@ void get_data_node_data(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,data_node_type
     model_node_data->push_back(data_it.key());
     
     data_it.operator++(0);
-    // if(node_it.is_end()){
-    //     break;
-    // }
+    
     }
              
 
 }
 
-
-std::vector<std::pair<model_node_type*,double>> calculate_best_node_cost_prev(std::vector<model_node_type*>& model_nodes_useful)
-{
-        
-        double cost_diff;
-        double temp_cost_diff;
-
-        model_node_type* best_node;
-        std::vector<std::pair<model_node_type*,double>> costs_diff_models;
-        
-        //Find the best node to use (the one with the least cost diff)
-        //Create a method get best model node
-        for(int i =0 ; i< model_nodes_useful.size(); i++){
-            if(i == 0){
-                cost_diff = model_nodes_useful[i]->cost_ - model_nodes_useful[i]->children_cost;
-                best_node = model_nodes_useful[i];
-            }
-
-            double temp_cost_diff = model_nodes_useful[i]->cost_ - model_nodes_useful[i]->children_cost;
-            
-            costs_diff_models.push_back(std::make_pair(model_nodes_useful[i], temp_cost_diff));
-
-            if(cost_diff>temp_cost_diff){
-                cost_diff = temp_cost_diff;
-                best_node = model_nodes_useful[i];
-                //I should probably get the index or something (How can I find the parent?)
-                //Need to change the NodeIterator to get parents as well
-            }
-        }
-    return  costs_diff_models;
-}
-
-
-void calculate_children_new_cost(std::vector<model_node_type*>& model_nodes_useful, alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
-double search_const, double traversal_const)
-{
-
-    for(int m =0; m < model_nodes_useful.size(); m++){
-        int num_child_best = model_nodes_useful[m]->num_children_;
-        node_type** best_children = model_nodes_useful[m]->children_;
-        std::mt19937_64 gen_payload(std::random_device{}());
-    
-        for(int i = 0; i < num_child_best;i++){
-            
-                data_node_type* child = static_cast<data_node_type*>(best_children[i]);
-
-                data_node_type::Iterator<data_node_type, PAYLOAD_TYPE, KEY_TYPE>
-                data_it(child,0);
-
-                std::vector<KEY_TYPE> temp_child;
-
-
-
-            while(!data_it.is_end()){
-                temp_child.push_back(data_it.key());
-
-                data_it.operator++(0);
-            }
-           
-            auto child_values = new std::pair<KEY_TYPE, PAYLOAD_TYPE>[temp_child.size()];
-
-        for (int i = 0; i < temp_child.size(); i++) {
-            child_values[i].first = temp_child[i];
-            child_values[i].second = static_cast<PAYLOAD_TYPE>(gen_payload());
-        }
-
-            child->cost_ = child->compute_new_cost(
-            child_values, temp_child.size(),temp_child.size(),model_nodes_useful[m]->num_keys_model_,child->level_, data_node_type::kInitDensity_,search_const, traversal_const,
-            index.params_.expected_insert_frac, &child->model_,
-            index.params_.approximate_cost_computation);
-
-            
-        }
-    }
-}
-
-void calculate_data_node_new_cost(std::vector<data_node_type*>& data_nodes, alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
-double search_const, double traversal_const)
-{
-
-    std::mt19937_64 gen_payload(std::random_device{}());
-    for(int m =0; m < data_nodes.size(); m++){
-        
-        
-                data_node_type* child = data_nodes[m];
-
-                data_node_type::Iterator<data_node_type, PAYLOAD_TYPE, KEY_TYPE>
-                data_it(child,0);
-
-                std::vector<KEY_TYPE> temp_child;
-
-
-
-            while(!data_it.is_end()){
-               
-                temp_child.push_back(data_it.key());
-
-                data_it.operator++(0);
-                
-            }
-            
-            auto child_values = new std::pair<KEY_TYPE, PAYLOAD_TYPE>[temp_child.size()];
-
-        for (int i = 0; i < temp_child.size(); i++) {
-            child_values[i].first = temp_child[i];
-            child_values[i].second = static_cast<PAYLOAD_TYPE>(gen_payload());
-        }
-
-             child->cost_ = child->compute_new_cost_new(
-            child_values, temp_child.size(),temp_child.size(),child->level_, data_node_type::kInitDensity_,search_const, traversal_const,
-            index.params_.expected_insert_frac, &child->model_,
-            index.params_.approximate_cost_computation);
-
-            
-    }
-}
 void calculate_data_node_new_cost_new(std::vector<model_node_type*>& model_nodes, alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
 double search_const, double traversal_const)
 {
@@ -1309,8 +1015,26 @@ void calculate_cost_difference(std::vector<model_node_type*>& model_nodes_useful
 
 
 //Method to get the constants of search per search and traversal per level
-void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYPE> data, int max_data, double *const_search, double *const_traversal){
+void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYPE> data1, int max_data, double *const_search, double *const_traversal, bool insert, std::string dataset_name){
+    std::vector<KEY_TYPE> data ;
+    if(insert){
+        data = data1;
 
+        std::string bulk_index_output = "../../../mnt2/Data/Splits/"+  dataset_name +"_bulk.bin";
+
+        std::vector<int> bulk_load_indexes = readIndexesFromFile(bulk_index_output);
+
+        std::vector<KEY_TYPE> subvector(bulk_load_indexes.size());
+        subvector.clear();
+
+        std::transform(bulk_load_indexes.begin(), bulk_load_indexes.end(), std::back_inserter(subvector),
+                   [&data1](int index) { return data1[index]; });
+
+        data = subvector;
+
+    }else{
+        data = data1;
+    }
     int const_size = std::min(static_cast<int>(round(data.size()*1)),max_data);
 
     //To get the random index
@@ -1323,8 +1047,8 @@ void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYP
 
     //get the random indexes to search
     for(int i =0; i < const_size; i++){
-        //int idx = rand_dis(generator);
-        data_test.push_back(i);
+        int idx = rand_dis(generator);
+        data_test.push_back(idx);
     }
     
     //Calculating just the query
@@ -1354,11 +1078,10 @@ void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYP
         }
         else{
             *const_traversal = time_query/(1.0*levels);
-            //*const_traversal = time_query;
         }
 
     //Calculating the total time
-     long num_searches =0;
+     long num_searches = 0;
 
      auto start_tot = std::chrono::high_resolution_clock::now();
      for(int i =0; i < const_size; i++){
@@ -1381,18 +1104,17 @@ void get_constants(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,std::vector<KEY_TYP
 
      auto search_time = time_tot - time_query;
 
+    std::cout << "num_searches " << num_searches << std::endl;
+    std::cout << "search_time " << search_time << std::endl;
+
      if(num_searches==0){
             *const_search = search_time;
         }
         else{
             *const_search = search_time/(1.0*num_searches);
         }
-
-       // *const_search = *const_search*3;
-
-
-    //*const_search = *const_search/static_cast<double>(const_size);
-    //*const_traversal = *const_traversal/static_cast<double>(const_size);
+    *const_search = 90;
+    *const_traversal = 30;
 
 }
 
@@ -1531,7 +1253,6 @@ double const_search, double const_traversal, bool calculate_childern_costs = tru
                     add = false;
                 }
 
-
             //Check if there are data
             if(add){
                 while(!data_it.is_end()){
@@ -1593,7 +1314,6 @@ std::pair<uint64_t, PAYLOAD_TYPE> * create_values(std::vector<KEY_TYPE> data,int
 
     return values;
 
-
 }
 
 //To create the values from poisoned data
@@ -1630,7 +1350,7 @@ std::vector<PAYLOAD_TYPE> payload, int size){
 }
 
 //create a new data node from the poisoned data
-data_node_type * create_new_data_node(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index , model_node_type* model, std::pair<uint64_t, double> * values, std::vector<KEY_TYPE> leg, int size, int cur_size,
+data_node_type * create_new_data_node(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index , model_node_type* model, std::pair<KEY_TYPE, PAYLOAD_TYPE> * values, std::vector<KEY_TYPE> leg, int size, int cur_size,
 double const_search, double const_traversal){
 
     node_type* model_data = static_cast<node_type*>(model);
@@ -1655,8 +1375,6 @@ double const_search, double const_traversal){
     return new_data_node;
 }
 
-
-
 void update_data_structure(model_node_type* best_node,std::vector<model_node_type*> *model_nodes,
 std::vector<model_node_type*> *model_nodes_by_level, std::vector<model_node_type*>* model_nodes_useful,
 std::vector<model_node_type*>* model_nodes_useful_by_level, std::vector<model_node_type*> parents,
@@ -1667,34 +1385,45 @@ double search_const, double traversal_const, std::vector<model_node_type*>* new_
     int best_level = best_node->level_;
 
     //remove from model_nodes
-    auto it = std::find((*model_nodes).begin(), (*model_nodes).end(), best_node);
+    while(true){
+        auto it = std::find((*model_nodes).begin(), (*model_nodes).end(), best_node);
 
-    //int index = std::distance((*model_nodes).begin(), it);
+        //int index = std::distance((*model_nodes).begin(), it);
 
-    //Remove from model nodes and best level
-    if (it != (*model_nodes).end()) {
-        // Pointer found, erase it from the vector
-        (*model_nodes).erase(it);
-        
-    } else {
+        //Remove from model nodes and best level
+        if (it != (*model_nodes).end()) {
+            // Pointer found, erase it from the vector
+            (*model_nodes).erase(it);
+            
+        } else {
+            break;
+        }
     }
 
     //remove from model nodes by level
-    auto it2 = std::find(model_nodes_by_level[best_level].begin(), model_nodes_by_level[best_level].end(), best_node);
+    while(true){
+        auto it2 = std::find(model_nodes_by_level[best_level].begin(), model_nodes_by_level[best_level].end(), best_node);
 
-    if (it2 != model_nodes_by_level[best_level].end()) {
-        // Pointer found, erase it from the vector
-        model_nodes_by_level[best_level].erase(it2);
-    } else {
+        if (it2 != model_nodes_by_level[best_level].end()) {
+            // Pointer found, erase it from the vector
+            model_nodes_by_level[best_level].erase(it2);
+        } else {
+            break;
+        }
     }
 
     //remove from model nodes useful
-    auto it3 = std::find((*model_nodes_useful).begin(), (*model_nodes_useful).end(), best_node);
+   
 
-    if (it3 != (*model_nodes_useful).end()) {
-        // Pointer found, erase it from the vector
-        (*model_nodes_useful).erase(it3);
-    } else {
+     while(true){
+        auto it3 = std::find((*model_nodes_useful).begin(), (*model_nodes_useful).end(), best_node);
+
+        if (it3 != (*model_nodes_useful).end()) {
+            // Pointer found, erase it from the vector
+            (*model_nodes_useful).erase(it3);
+        } else {
+            break;
+        }
     }
 
     //remove from model nodes useful by level
@@ -1723,36 +1452,46 @@ double search_const, double traversal_const, std::vector<model_node_type*>* new_
 }
 
 std::vector<model_node_type*> replace_parents(model_node_type* model,data_node_type *new_data_node,std::vector<model_node_type*> *model_nodes_by_level, int *model_idx,
-int *parent_model_idx){
+int *parent_model_idx,int max_model_height){
 
     bool parent_found = false;
     model_node_type* parent;
     std::vector<model_node_type*> parents;
 
     //Start from the level above of the best node
-    int level = model->level_ - 1;
+    int level = model->level_ ;
     int count = 0;
+        
+        //For all leve  s I have to replace the parent
+        //for(int l = 0 ; l <=level ; l++){
 
-        //For all levels I have to replace the parent
-        for(int l = level ; level >=0 ; level--){
+
+        for(int l = level ; l >=0 ; l--){
+            
             //For each model node in the model nodes by level (all models not just useful)
             for(model_node_type* node : model_nodes_by_level[l]){
+                
                 node_type** childrens  = node->children_;
 
                 int num_child = node->num_children_;
+                
 
                 for(int i =0; i< num_child; i++){
-                    if(model == childrens[i]){
+                    if(model == node->children_[i]){
+                        
+                       
                         parent = node;
                         parents.push_back(node);
                         parent_found = true;
                         *model_idx = i;
                         count++;
-                        
-                        //Setting the new parent pointer
-                        parent->children_[i] = new_data_node;
+                       
+                        node->children_[i] = new_data_node;
+
+                        node->children_[i]->is_leaf_ = true;
                     }
                 }
+               
                 *parent_model_idx++;
             
             }
@@ -1760,7 +1499,6 @@ int *parent_model_idx){
         return parents;
 
 }
-
 
 //Expects the children cost to be already calculated
  void get_children_cost(model_node_type* model, double *children_cost,alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index,
@@ -1838,11 +1576,7 @@ double search_const, double traversal_const){
                
                 }
                 //Add to child data
-
-                
-                        child_node_data.push_back(temp_child);
-
-
+                    child_node_data.push_back(temp_child);
                     auto child_values = new std::pair<KEY_TYPE, PAYLOAD_TYPE>[temp_child.size()];
 
                     for (int i = 0; i < temp_child.size(); i++) {
@@ -1937,3 +1671,69 @@ void get_data_by_level(std::vector<data_node_type*> *data_nodes_by_level, std::v
         }
     }
 }
+
+
+int csv_node(std::vector<model_node_type*> model_nodes_useful_by_level, double poi_thres,double const_search, double const_traversal, int cutoff, size_t start, size_t end){
+    int current_poi = 0;
+    
+    for (size_t inner_idx = start; inner_idx < end; ++inner_idx) {
+        
+        model_node_type* best_node;
+        
+        int node_height_original_=0;
+        std::vector<std::vector<KEY_TYPE>*> node_data_original;
+
+        best_node = model_nodes_useful_by_level[inner_idx];
+        //best_node = index.root;
+        double best_children_cost = 0;
+        std::vector<KEY_TYPE> model_node_data;
+        std::vector<PAYLOAD_TYPE> model_node_payload;
+
+        std::vector<KEY_TYPE> poisoned_model_data;
+        int poisoned_model_data_size;
+
+        get_children_data(index2, best_node, &model_node_data,&model_node_payload, &best_children_cost, const_search, const_traversal, false);
+
+        //GET ALL DATA FROM SUBTREE
+        //===========================
+        //Shift the data to avoid large values
+       
+        if(best_node->cost_diff_ > (cutoff) || true){
+            KEY_TYPE first_val = model_node_data[0];
+            shift_vector(&model_node_data, first_val);
+
+            //Do the poisoning for the model data
+            poisoned_model_data = perform_poisoning(model_node_data, poi_thres);
+
+            shift_back_vector(&poisoned_model_data, first_val);
+            shift_back_vector(&model_node_data, first_val);
+            poisoned_model_data_size = poisoned_model_data.size();
+
+            //get new values for the poisoning data while using the old ones for the existing
+            auto poisoned_values = get_poisoned_values(model_node_data, poisoned_model_data, model_node_payload, poisoned_model_data_size);
+
+             {
+                std::lock_guard<std::mutex> lock(resultsMutex);
+                values_for_inner[inner_idx] = std::make_tuple(poisoned_values,model_node_data.size(),model_node_data ,poisoned_model_data_size);
+
+            }
+                current_poi = poisoned_model_data_size - model_node_data.size();
+
+         }
+            
+        
+        else{
+                {
+                std::vector<KEY_TYPE> emptyVec;
+                std::lock_guard<std::mutex> lock(resultsMutex);
+                
+                values_for_inner[inner_idx] = std::make_tuple(nullptr,0,emptyVec, 0);
+
+                }
+            }
+  
+    }
+            return current_poi;
+            
+}
+

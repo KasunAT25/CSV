@@ -1,11 +1,6 @@
 #!/bin/bash
 
 # chmod +x benchmark_sali_insert.sh
-
-# nohup ./benchmark_sali_insert.sh &
-# ./benchmark_sali_insert.sh
-
-
 datasets=("fb" "covid" "osm" "genome")
 
 #datasets=("test")
@@ -31,7 +26,7 @@ for dataset in "${datasets[@]}"; do
             for smooth in "${smooths[@]}"; do
                 echo "Running with dataset: $dataset: smooth $smooth: smooth size $smooth_size: insert prop $insert_prop"
                 #echo "=============="
-                ./sali_csv "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop"                
+                ./sali_csv_par "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop"                
             done
         done
     done 

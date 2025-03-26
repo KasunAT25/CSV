@@ -2,19 +2,17 @@
 
 # chmod +x benchmark_sali.sh
 
-# nohup ./benchmark_sali.sh &
-# ./benchmark_sali.sh
-
 datasets=("fb" "covid" "osm" "genome")
-
 #datasets=("test")
 smooths=("1" "0")
+#smooths=("1")
+# smooth_sizes=("0.8")
 smooth_sizes=("0.05" "0.1" "0.2" "0.4" "0.8")
 
 insert_props=("0")
 
 # Compile the C++ program
-#g++ -fopenmp -I /opt/intel/oneapi/tbb/2021.12/include sali_csv.cpp -std=c++17 -o sali_csv -L /opt/intel/oneapi/tbb/2021.12/lib -ltbb -march=native -mpopcnt
+g++ -fopenmp -pthread -I /opt/intel/oneapi/tbb/2021.12/include sali_csv_par.cpp -std=c++17 -o sali_csv_par -L /opt/intel/oneapi/tbb/2021.12/lib -ltbb -march=native -mpopcnt
 
 # Check if compilation was successful
 if [ $? -eq 0 ]; then
@@ -31,7 +29,7 @@ for dataset in "${datasets[@]}"; do
             for smooth in "${smooths[@]}"; do
                 echo "Running with dataset: $dataset: smooth $smooth: smooth size $smooth_size: insert prop $insert_prop"
                 #echo "=============="
-                ./sali_csv "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop"
+                LD_LIBRARY_PATH=/opt/intel/oneapi/tbb/2021.12/lib:$LD_LIBRARY_PATH ./sali_csv_par "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop"
             done
         done
     done 

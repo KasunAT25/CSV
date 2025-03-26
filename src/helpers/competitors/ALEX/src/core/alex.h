@@ -406,8 +406,10 @@ class Alex {
     if (traversal_path) {
       traversal_path->push_back({superroot_, 0});
     }
+    
     AlexNode<T, P>* cur = root_node_;
     if (cur->is_leaf_) {
+      
       return static_cast<data_node_type*>(cur);
     }
 
@@ -439,20 +441,25 @@ class Alex {
             if (leaf->prev_leaf_ && leaf->prev_leaf_->last_key() >= key) {
               if (traversal_path) {
                 // Correct the traversal path
+                //std::cout << "=========================" << std::endl;
                 correct_traversal_path(leaf, *traversal_path, true);
               }
+              //std::cout << "prev =======" << std::endl;
               return leaf->prev_leaf_;
             }
           } else {
             if (leaf->next_leaf_ && leaf->next_leaf_->first_key() <= key) {
               if (traversal_path) {
                 // Correct the traversal path
+                //std::cout << "=========================" << std::endl;
                 correct_traversal_path(leaf, *traversal_path, false);
               }
+              //std::cout << "next =======" << std::endl;
               return leaf->next_leaf_;
             }
           }
         }
+        //std:: cout << "here " << std::endl;
         return leaf;
       }
     }
@@ -958,6 +965,9 @@ class Alex {
   typename self_type::Iterator find(const T& key) {
     stats_.num_lookups++;
     data_node_type* leaf = get_leaf(key);
+
+    
+
     int idx = leaf->find_key(key);
     if (idx < 0) {
       return end();
@@ -970,6 +980,7 @@ class Alex {
     stats_.num_lookups++;
     data_node_type* leaf = get_leaf(key);
     int idx = leaf->find_key(key);
+    
     if (idx < 0) {
       return cend();
     } else {

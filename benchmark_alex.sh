@@ -2,20 +2,19 @@
 
 # chmod +x benchmark_alex.sh
 
-# nohup ./benchmark_alex.sh &
-# ./benchmark_alex.sh
+
 
 datasets=("fb" "covid" "osm" "genome")
-#datasets=("test")
 
 smooths=("1" "0")
+# smooth_sizes=("0.1")
 smooth_sizes=("0.05" "0.1" "0.2" "0.4" "0.8")
 insert_props=("0")
-cutoffs=(-30 -100 -50 -50)
-
+cutoffs=(-50 -50 -50 -50)
 
 # Compile the C++ program
 # g++ alex_csv.cpp -std=c++17 -o alex_csv -march=native -mpopcnt
+g++ -pthread alex_csv_par.cpp -std=c++17 -o alex_csv_par -march=native -mpopcnt
 
 # Check if compilation was successful
 if [ $? -eq 0 ]; then
@@ -34,7 +33,7 @@ for dataset in "${datasets[@]}"; do
             for smooth in "${smooths[@]}"; do
                 echo "Running with dataset: $dataset: smooth $smooth: smooth size $smooth_size: insert prop $insert_prop"
                 #echo "=============="
-                ./alex_csv "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop" "$cutoff"
+                ./alex_csv_par "$dataset" 200000000 "$smooth" "$smooth_size" "$insert_prop" "$cutoff"
             done
         done
     done 

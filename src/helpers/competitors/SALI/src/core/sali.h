@@ -3775,8 +3775,10 @@ public:
             if (end - begin == 2) {
 
                 //Add args here too
-                bool num1 = std::find(_keys_real, _keys_real + _size_real, _keys[begin]) != _keys_real + _size_real;
-                bool num2 = std::find(_keys_real, _keys_real + _size_real, _keys[begin+1]) != _keys_real + _size_real;
+                // bool num1 = std::find(_keys_real, _keys_real + _size_real, _keys[begin]) != _keys_real + _size_real;
+                // bool num2 = std::find(_keys_real, _keys_real + _size_real, _keys[begin+1]) != _keys_real + _size_real;
+                bool num1 = true;
+                bool num2 = true;
 
                 
 
@@ -4163,6 +4165,7 @@ public:
               //This will save only the poisoning keys that do not create a new collision
               //need to change the 
               //===================
+              int real_idx = idx;
                 for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size; ) {
                     //std::cout << "================" <<  std::endl;
                     //node->poi_node = 1;
@@ -4176,10 +4179,12 @@ public:
 
                     int next = offset + 1, next_i = -1;
 
-                    if(std::find(_keys_real, _keys_real + _size_real, keys[offset]) != _keys_real + _size_real){
+                    if(_keys_real[real_idx] == keys[offset]){
+                    //if(std::find(_keys_real, _keys_real + _size_real, keys[offset]) != _keys_real + _size_real){
                             real_prev = true;
                             count++;
                             id = offset;
+                            real_idx++;
                         }
                         else{
                             poi_count++;
@@ -4195,8 +4200,10 @@ public:
                         //If the same location then do this. I could check if this is poisoned then can skip. that and check the next original.
                         //If it is JUST poisoned then do not create a child. If it also has original data THEN create the child.
                         real = false;
-                        if(std::find(_keys_real, _keys_real + _size_real, keys[next]) != _keys_real + _size_real){
-                                real = true;   
+                        if(_keys_real[real_idx] == keys[next]){
+                        // if(std::find(_keys_real, _keys_real + _size_real, keys[next]) != _keys_real + _size_real){
+                                real = true; 
+                                real_idx++;  
                                 //idx++;
                             }
                         if (next_i == item_i) {
@@ -4204,6 +4211,7 @@ public:
                                 real_next = true;
                                 count++;
                                 id = next;
+                                
                                // next_real++;
                             }
                             else{
@@ -4215,6 +4223,9 @@ public:
                             // }
                             next ++;
                         } else {
+                          if(real){
+                            real_idx--;
+                          }
                             break;
                         }
                     }
@@ -4251,17 +4262,17 @@ public:
 
                             node->items[item_i].entry_type = 1;
                             node->items[item_i].comp.child = new_nodes(1);
-                            s.push((Segment){begin + offset, begin + next, level + 1, node->items[item_i].comp.child, idx, poi_count, speed / node->num_items});
+                            s.push((Segment){begin + offset, begin + next, level + 1, node->items[item_i].comp.child, real_idx-count, poi_count, speed / node->num_items});
                         }
                         else if(count == 1){
-                            if(std::find(_keys_real, _keys_real + _size_real, keys[id]) != _keys_real + _size_real){
+                            //if(std::find(_keys_real, _keys_real + _size_real, keys[id]) != _keys_real + _size_real){
                                // BITMAP_CLEAR(node->none_bitmap, item_i);
                                //std::cout <<  keys[id] <<  " ";
                                 node->items[item_i].entry_type = 2;
                                 node->items[item_i].comp.data.key = keys[id];
                                 node->items[item_i].comp.data.value = values[id];
                                 //node->size++;
-                            }
+                           // }
                             
                         }
                         //If there are conflicts but all are poisoned values then

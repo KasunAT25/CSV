@@ -2048,12 +2048,23 @@ class AlexDataNode : public AlexNode<T, P> {
 
     // The last key slot with a certain value is guaranteed to be a real key
     // (instead of a gap)
+    // for(int pos = 0; pos < data_capacity_; pos++){
+
+    //   if (ALEX_DATA_NODE_KEY_AT(pos) == key) {
+      
+    //     return pos;
+      
+    //   } 
+    // }
     int pos = exponential_search_upper_bound(predicted_pos, key) - 1;
     if (pos < 0 || !key_equal(ALEX_DATA_NODE_KEY_AT(pos), key)) {
+      //std::cout << "error" <<std::endl;
       return -1;
     } else {
       return pos;
     }
+    // std::cout << "error" <<std::endl;
+    //  return -1;
   }
 
   // Searches for the first non-gap position no less than key
